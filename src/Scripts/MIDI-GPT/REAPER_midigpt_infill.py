@@ -224,16 +224,16 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
         if fx_loc >= 0:
             if model_type == "expressive":
                 # Expressive JSFX slider mapping:
-                # slider2: key_signature (0-25)      → track-level
-                # slider3: pitch_range (0-128)        → track-level
-                # slider4: silence_proportion (0-10)  → track-level
-                # slider5: min_note_duration_q (0-6)  → track-level
-                # slider6: max_note_duration_q (0-6)  → track-level
-                # slider7: density (0-10)             → bar-level (bar_note_density)
-                # slider8: min_polyphony_q (0-10)     → bar-level (bar_min_polyphony)
-                # slider9: max_polyphony_q (0-10)     → bar-level (bar_max_polyphony)
-                # slider10: pitch_class_set (0-13)    → bar-level
-                # slider11: nomml (0-13)              → track-level
+                # slider2: key_signature (0-25)      -> track-level
+                # slider3: pitch_range (0-128)        -> track-level
+                # slider4: silence_proportion (0-10)  -> track-level
+                # slider5: min_note_duration_q (0-6)  -> track-level
+                # slider6: max_note_duration_q (0-6)  -> track-level
+                # slider7: density (0-10)             -> bar-level (bar_note_density)
+                # slider8: min_polyphony_q (0-10)     -> bar-level (bar_min_polyphony)
+                # slider9: max_polyphony_q (0-10)     -> bar-level (bar_max_polyphony)
+                # slider10: pitch_class_set (0-13)    -> bar-level
+                # slider11: nomml (0-13)              -> track-level
                 # slider12: autoregressive (0-1)
                 # slider13: ignore (0-1)
                 try:
@@ -267,15 +267,15 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
 
             elif model_type == "prism":
                 # Prism JSFX slider mapping:
-                # slider2: key_signature (0-25)      → track-level
-                # slider3: pitch_range (0-128)        → track-level
-                # slider4: silence_proportion (0-10)  → track-level
-                # slider5: min_note_duration_q (0-6)  → track-level
-                # slider6: max_note_duration_q (0-6)  → track-level
-                # slider7: density (0-10)             → bar-level (bar_note_density)
-                # slider8: min_polyphony_q (0-10)     → bar-level (bar_min_polyphony)
-                # slider9: max_polyphony_q (0-10)     → bar-level (bar_max_polyphony)
-                # slider10: pitch_class_set (0-13)    → bar-level
+                # slider2: key_signature (0-25)      -> track-level
+                # slider3: pitch_range (0-128)        -> track-level
+                # slider4: silence_proportion (0-10)  -> track-level
+                # slider5: min_note_duration_q (0-6)  -> track-level
+                # slider6: max_note_duration_q (0-6)  -> track-level
+                # slider7: density (0-10)             -> bar-level (bar_note_density)
+                # slider8: min_polyphony_q (0-10)     -> bar-level (bar_min_polyphony)
+                # slider9: max_polyphony_q (0-10)     -> bar-level (bar_max_polyphony)
+                # slider10: pitch_class_set (0-13)    -> bar-level
                 # slider11: autoregressive (0-1)
                 # slider12: ignore (0-1)
                 try:
@@ -307,11 +307,11 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
 
             else:
                 # Yellow mapping:
-                # slider2: density (0-10)             → track-level
-                # slider3: min_polyphony_q (0-10)     → track-level
-                # slider4: max_polyphony_q (0-10)     → track-level
-                # slider5: min_note_duration_q (0-6)  → track-level
-                # slider6: max_note_duration_q (0-6)  → track-level
+                # slider2: density (0-10)             -> track-level
+                # slider3: min_polyphony_q (0-10)     -> track-level
+                # slider4: max_polyphony_q (0-10)     -> track-level
+                # slider5: min_note_duration_q (0-6)  -> track-level
+                # slider6: max_note_duration_q (0-6)  -> track-level
                 # slider7: polyphony_hard_limit (0-16)
                 # slider8: autoregressive (0-1)
                 # slider9: ignore (0-1)
