@@ -26,9 +26,6 @@ SKIP_REAPER_CONFIG=false
 
 # Target MIDI-GPT source repo path. Auto-detected at the sibling path ../MIDI-GPT.
 MIDIGPT_SRC=""
-if [ -d "$REPO_DIR/../MIDI-GPT" ]; then
-    MIDIGPT_SRC="$(cd "$REPO_DIR/../MIDI-GPT" && pwd)"
-fi
 
 # ── Colors ──────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -260,10 +257,6 @@ step "Step 3/6: Installing MIDI-GPT backend"
 if [ -n "$MIDIGPT_SRC" ] && [ -d "$MIDIGPT_SRC" ]; then
     info "Installing midigpt[http,inference] from source: $MIDIGPT_SRC ..."
     pip install -e "${MIDIGPT_SRC}[http,inference]" 2>&1 | tail -5
-elif [ -d "$REPO_DIR/../MIDI-GPT" ]; then
-    MIDIGPT_SIBLING="$(cd "$REPO_DIR/../MIDI-GPT" && pwd)"
-    info "Installing midigpt[http,inference] from sibling repo: $MIDIGPT_SIBLING ..."
-    pip install -e "${MIDIGPT_SIBLING}[http,inference]" 2>&1 | tail -5
 else
     info "Installing midigpt[http,inference] from PyPI ..."
     if ! pip install "midigpt[http,inference]" 2>&1 | tail -5; then
@@ -473,7 +466,7 @@ echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_infill.py"
 echo ""
 echo "  2. Add JSFX plugins:"
 echo "     - Add 'MIDI-GPT Global Options' to Monitor FX (View > Monitoring Effects)"
-echo "     - Add 'MIDI-GPT Track Options (Yellow-Ghost)' or 'MIDI-GPT Track Options (Expressive)' to tracks"
+echo "     - Add 'MIDI-GPT Track Options (Yellow)', '(Prism)', or '(Expressive)' to tracks"
 echo ""
 echo -e "${BOLD}To start the server:${NC}"
 if [ -d "$HOME/Desktop" ]; then

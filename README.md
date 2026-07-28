@@ -41,7 +41,8 @@ AI-powered multi-track MIDI generation plugin for [REAPER](https://www.reaper.fm
   - [Controls Reference](#controls-reference)
     - [Global Options (Monitor FX or Master Track)](#global-options-monitor-fx-or-master-track)
     - [Track Options (Per-Track FX)](#track-options-per-track-fx)
-      - [Yellow-Ghost Model Parameters](#yellow-ghost-model-parameters)
+      - [Yellow Model Parameters](#yellow-model-parameters)
+      - [Prism Model Parameters](#prism-model-parameters)
       - [Expressive Model Parameters](#expressive-model-parameters)
   - [Running Tests](#running-tests)
   - [Building a Release Package](#building-a-release-package)
@@ -129,7 +130,7 @@ If you cloned this repo and want to link a local `MIDI-GPT` backend repository:
 
 3. **Add Track Options JSFX (optional, per track):**
    * On tracks where you want per-track control over density, polyphony, and duration, add the track JSFX.
-   * Search for **`JS: MIDI-GPT Track Options (Yellow-Ghost)`** and add it to the track's FX chain.
+   * Search for **`JS: MIDI-GPT Track Options (Yellow)`**, **`(Prism)`**, or **`(Expressive)`** (matching the model loaded on the server) and add it to the track's FX chain.
    * Tracks without this JSFX use default values inferred from existing content — see [Tips and Common Gotchas](#tips-and-common-gotchas) for when this matters.
 
 ---
@@ -141,9 +142,10 @@ If you cloned this repo and want to link a local `MIDI-GPT` backend repository:
 Double-click the **`Start MIDI-GPT Server`** shortcut on your Desktop, or run from the repo:
 
 ```bash
-./start_midigpt_server.sh                        # Yellow model (default)
-./start_midigpt_server.sh --pretrained ghost     # Ghost model
-./start_midigpt_server.sh --ckpt /path/to/model  # Local checkpoint
+./start_midigpt_server.sh                                          # yellow_medium (default)
+./start_midigpt_server.sh --pretrained prism_medium                # Prism model
+./start_midigpt_server.sh --pretrained expressive_medium           # Expressive model
+./start_midigpt_server.sh --ckpt /path/to/model.safetensors        # Local checkpoint
 ```
 
 The model is fixed for the lifetime of the server process. To switch models, stop the server and restart it with a different flag. The REAPER script auto-detects the running model via the server's `/info` endpoint and loads the correct Track Options JSFX automatically.
@@ -225,7 +227,7 @@ To get useful results on empty tracks:
 
 ### Track Options (Per-Track FX)
 
-#### Yellow-Ghost Model Parameters
+#### Yellow Model Parameters
 * **Density** (0-10): Note density level.
 * **Min Polyphony** (0-10): Min simultaneous notes.
 * **Max Polyphony** (0-10): Max simultaneous notes.
@@ -234,8 +236,19 @@ To get useful results on empty tracks:
 * **Autoregressive**: Freely generate full track bar-by-bar.
 * **Ignore**: Ignores this track for generation (treats as context).
 
+#### Prism Model Parameters
+* **Key Signature** (0-25): Constrain output to a key (0 = any).
+* **Pitch Range** (0-128): Max pitch span in semitones (0 = any).
+* **Silence Proportion** (0-10): Target proportion of silence (0 = any).
+* **Min / Max Note Duration** (0-6): Quantized note duration bounds.
+* **Density** (0-10): Per-bar note density (applied to each generated bar).
+* **Min / Max Polyphony** (0-10): Per-bar simultaneous note bounds.
+* **Pitch Class Set** (0-13): Number of distinct pitch classes per bar (0 = any).
+* **Autoregressive**: Freely generate full track bar-by-bar.
+* **Ignore**: Ignores this track for generation (treats as context).
+
 #### Expressive Model Parameters
-* Adds **Key Signature**, **Pitch Range**, **Silence Proportion**, **Pitch Class Set**, and **Nomml** controllers.
+* All Prism parameters, plus **NOMML** (0-13): Quantization grid depth controlling microtiming expressivity (0 = any, 13 = fully expressive).
 
 ---
 

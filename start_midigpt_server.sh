@@ -3,12 +3,13 @@
 # MIDI-GPT HTTP Server Launcher (macOS / Linux)
 #
 # Starts the stateless FastAPI HTTP server for REAPER generation.
-# By default, runs the 'yellow' model on port 3456.
+# By default, runs the yellow_medium model on port 3456.
 #
 # Usage:
-#   ./start_midigpt_server.sh                          # Runs yellow
-#   ./start_midigpt_server.sh --pretrained ghost       # Runs ghost
-#   ./start_midigpt_server.sh --ckpt path/to/model.pt  # Runs local checkpoint
+#   ./start_midigpt_server.sh                                    # yellow_medium (default)
+#   ./start_midigpt_server.sh --pretrained prism_medium          # Prism model
+#   ./start_midigpt_server.sh --pretrained expressive_medium     # Expressive model
+#   ./start_midigpt_server.sh --ckpt path/to/model.safetensors   # Local checkpoint
 # ============================================================================
 
 # cd to the directory containing this script
@@ -36,9 +37,9 @@ echo "  Press Ctrl+C to stop the server."
 echo ""
 
 # Default parameters: run 'yellow' model on port 3456 if no arguments are provided.
-# If arguments are passed (e.g. --pretrained ghost or --ckpt ...), forward them.
+# If arguments are passed (e.g. --pretrained prism_medium or --ckpt ...), forward them.
 if [ $# -eq 0 ]; then
-    midigpt-http --pretrained yellow --port 3456
+    midigpt-http --pretrained yellow_medium --port 3456
 else
     midigpt-http --port 3456 "$@"
 fi

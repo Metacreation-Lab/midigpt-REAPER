@@ -104,7 +104,7 @@ done
 
 # ── Source: Effects (JSFX) ──
 mkdir -p "$RELEASE_DIR/src/Effects/MIDI-GPT"
-for f in "MIDI-GPT Global Options.js" "MIDI-GPT Track Options (Yellow-Ghost).js" "MIDI-GPT Track Options (Expressive).js"; do
+for f in "MIDI-GPT Global Options.js" "MIDI-GPT Track Options (Yellow).js" "MIDI-GPT Track Options (Prism).js" "MIDI-GPT Track Options (Expressive).js"; do
     cp "$SCRIPT_DIR/src/Effects/MIDI-GPT/$f" "$RELEASE_DIR/src/Effects/MIDI-GPT/$f"
 done
 

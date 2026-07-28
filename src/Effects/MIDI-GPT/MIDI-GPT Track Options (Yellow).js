@@ -1,4 +1,4 @@
-desc:MIDI-GPT Track Options (Yellow-Ghost)
+desc:MIDI-GPT Track Options (Yellow)
 
 slider1:jsfx_id=349583025<349583025,349583025,1>-jsfx_id
 

@@ -4,7 +4,7 @@ REAPER_midigpt_infill.py  --  REAPER-side MIDI-GPT client
 
 On every run:
   1. Call GET /info to fetch loaded model metadata (capabilities, resolution, attributes).
-  2. Locate Global Options JSFX and Track Options JSFX (Yellow-Ghost or Expressive).
+  2. Locate Global Options JSFX and Track Options JSFX (Yellow, Prism, or Expressive).
   3. Extract MIDI from selected items in REAPER.
   4. Convert to a stateless Score JSON payload.
   5. Submit to POST /generate.
@@ -33,6 +33,7 @@ SERVER_URL = "http://127.0.0.1:3456"
 GLOBAL_FX_ID = 54964318
 TRACK_FX_YELLOW_ID = 349583025
 TRACK_FX_EXPRESSIVE_ID = 349583026
+TRACK_FX_PRISM_ID = 349583027
 
 # ---------------------------------------------------------------------------
 # Console Helper
@@ -217,79 +218,121 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
         is_ar = False
         is_ignored = False
         attrs = {}
+        bar_attrs = {}
 
         if fx_loc >= 0:
             if model_type == "expressive":
-                # Expressive mapping:
-                # slider2: key_signature (0-25)
-                # slider3: pitch_range (0-128)
-                # slider4: silence_proportion (0-10)
-                # slider5: min_note_duration_q (0-6)
-                # slider6: max_note_duration_q (0-6)
-                # slider7: density (0-10)
-                # slider8: min_polyphony_q (0-10)
-                # slider9: max_polyphony_q (0-10)
-                # slider10: pitch_class_set (0-13)
-                # slider11: nomml (0-13)
+                # Expressive JSFX slider mapping:
+                # slider2: key_signature (0-25)      → track-level
+                # slider3: pitch_range (0-128)        → track-level
+                # slider4: silence_proportion (0-10)  → track-level
+                # slider5: min_note_duration_q (0-6)  → track-level
+                # slider6: max_note_duration_q (0-6)  → track-level
+                # slider7: density (0-10)             → bar-level
+                # slider8: min_polyphony_q (0-10)     → bar-level
+                # slider9: max_polyphony_q (0-10)     → bar-level
+                # slider10: pitch_class_set (0-13)    → bar-level
+                # slider11: nomml (0-13)              → track-level
                 # slider12: autoregressive (0-1)
                 # slider13: ignore (0-1)
                 try:
-                    key_sig = int(RPR_TrackFX_GetParam(track, fx_loc, 1, 0, 0)[0])
-                    pitch_rng = int(RPR_TrackFX_GetParam(track, fx_loc, 2, 0, 0)[0])
-                    silence = int(RPR_TrackFX_GetParam(track, fx_loc, 3, 0, 0)[0])
-                    min_dur = int(RPR_TrackFX_GetParam(track, fx_loc, 4, 0, 0)[0])
-                    max_dur = int(RPR_TrackFX_GetParam(track, fx_loc, 5, 0, 0)[0])
-                    density = int(RPR_TrackFX_GetParam(track, fx_loc, 6, 0, 0)[0])
-                    min_poly = int(RPR_TrackFX_GetParam(track, fx_loc, 7, 0, 0)[0])
-                    max_poly = int(RPR_TrackFX_GetParam(track, fx_loc, 8, 0, 0)[0])
-                    pcs = int(RPR_TrackFX_GetParam(track, fx_loc, 9, 0, 0)[0])
-                    nomml = int(RPR_TrackFX_GetParam(track, fx_loc, 10, 0, 0)[0])
+                    key_sig   = int(RPR_TrackFX_GetParam(track, fx_loc, 1,  0, 0)[0])
+                    pitch_rng = int(RPR_TrackFX_GetParam(track, fx_loc, 2,  0, 0)[0])
+                    silence   = int(RPR_TrackFX_GetParam(track, fx_loc, 3,  0, 0)[0])
+                    min_dur   = int(RPR_TrackFX_GetParam(track, fx_loc, 4,  0, 0)[0])
+                    max_dur   = int(RPR_TrackFX_GetParam(track, fx_loc, 5,  0, 0)[0])
+                    density   = int(RPR_TrackFX_GetParam(track, fx_loc, 6,  0, 0)[0])
+                    min_poly  = int(RPR_TrackFX_GetParam(track, fx_loc, 7,  0, 0)[0])
+                    max_poly  = int(RPR_TrackFX_GetParam(track, fx_loc, 8,  0, 0)[0])
+                    pcs       = int(RPR_TrackFX_GetParam(track, fx_loc, 9,  0, 0)[0])
+                    nomml     = int(RPR_TrackFX_GetParam(track, fx_loc, 10, 0, 0)[0])
 
-                    is_ar = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 11, 0, 0)[0]))
+                    is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 11, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 12, 0, 0)[0]))
 
-                    if key_sig > 0: attrs["key_signature"] = key_sig - 1
-                    if pitch_rng > 0: attrs["pitch_range"] = pitch_rng - 1
-                    if silence > 0: attrs["silence_proportion"] = silence - 1
-                    if min_dur > 0: attrs["min_note_duration"] = min_dur - 1
-                    if max_dur > 0: attrs["max_note_duration"] = max_dur - 1
-                    if density > 0: attrs["note_density"] = density - 1
-                    if min_poly > 0: attrs["min_polyphony"] = min_poly - 1
-                    if max_poly > 0: attrs["max_polyphony"] = max_poly - 1
-                    if pcs > 0: attrs["pitch_class_set_track"] = pcs - 1
-                    if nomml > 0: attrs["nomml"] = nomml - 1
+                    if key_sig   > 0: attrs["key_signature"]      = key_sig - 1
+                    if pitch_rng > 0: attrs["pitch_range"]         = pitch_rng - 1
+                    if silence   > 0: attrs["silence_proportion"]  = silence - 1
+                    if min_dur   > 0: attrs["min_note_duration"]   = min_dur - 1
+                    if max_dur   > 0: attrs["max_note_duration"]   = max_dur - 1
+                    if nomml     > 0: attrs["nomml"]               = nomml - 1
+
+                    if density  > 0: bar_attrs["note_density"]   = density - 1
+                    if min_poly > 0: bar_attrs["min_polyphony"]  = min_poly - 1
+                    if max_poly > 0: bar_attrs["max_polyphony"]  = max_poly - 1
+                    if pcs      > 0: bar_attrs["pitch_class_set"] = pcs - 1
                 except Exception as e:
                     print(f"Error reading Expressive JSFX for track {i}: {e}\n")
 
+            elif model_type == "prism":
+                # Prism JSFX slider mapping:
+                # slider2: key_signature (0-25)      → track-level
+                # slider3: pitch_range (0-128)        → track-level
+                # slider4: silence_proportion (0-10)  → track-level
+                # slider5: min_note_duration_q (0-6)  → track-level
+                # slider6: max_note_duration_q (0-6)  → track-level
+                # slider7: density (0-10)             → bar-level
+                # slider8: min_polyphony_q (0-10)     → bar-level
+                # slider9: max_polyphony_q (0-10)     → bar-level
+                # slider10: pitch_class_set (0-13)    → bar-level
+                # slider11: autoregressive (0-1)
+                # slider12: ignore (0-1)
+                try:
+                    key_sig   = int(RPR_TrackFX_GetParam(track, fx_loc, 1,  0, 0)[0])
+                    pitch_rng = int(RPR_TrackFX_GetParam(track, fx_loc, 2,  0, 0)[0])
+                    silence   = int(RPR_TrackFX_GetParam(track, fx_loc, 3,  0, 0)[0])
+                    min_dur   = int(RPR_TrackFX_GetParam(track, fx_loc, 4,  0, 0)[0])
+                    max_dur   = int(RPR_TrackFX_GetParam(track, fx_loc, 5,  0, 0)[0])
+                    density   = int(RPR_TrackFX_GetParam(track, fx_loc, 6,  0, 0)[0])
+                    min_poly  = int(RPR_TrackFX_GetParam(track, fx_loc, 7,  0, 0)[0])
+                    max_poly  = int(RPR_TrackFX_GetParam(track, fx_loc, 8,  0, 0)[0])
+                    pcs       = int(RPR_TrackFX_GetParam(track, fx_loc, 9,  0, 0)[0])
+
+                    is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 10, 0, 0)[0]))
+                    is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 11, 0, 0)[0]))
+
+                    if key_sig   > 0: attrs["key_signature"]     = key_sig - 1
+                    if pitch_rng > 0: attrs["pitch_range"]        = pitch_rng - 1
+                    if silence   > 0: attrs["silence_proportion"] = silence - 1
+                    if min_dur   > 0: attrs["min_note_duration"]  = min_dur - 1
+                    if max_dur   > 0: attrs["max_note_duration"]  = max_dur - 1
+
+                    if density  > 0: bar_attrs["note_density"]   = density - 1
+                    if min_poly > 0: bar_attrs["min_polyphony"]  = min_poly - 1
+                    if max_poly > 0: bar_attrs["max_polyphony"]  = max_poly - 1
+                    if pcs      > 0: bar_attrs["pitch_class_set"] = pcs - 1
+                except Exception as e:
+                    print(f"Error reading Prism JSFX for track {i}: {e}\n")
+
             else:
-                # Yellow/Ghost mapping:
-                # slider2: density (0-10)
-                # slider3: min_polyphony_q (0-10)
-                # slider4: max_polyphony_q (0-10)
-                # slider5: min_note_duration_q (0-6)
-                # slider6: max_note_duration_q (0-6)
+                # Yellow mapping:
+                # slider2: density (0-10)             → track-level
+                # slider3: min_polyphony_q (0-10)     → track-level
+                # slider4: max_polyphony_q (0-10)     → track-level
+                # slider5: min_note_duration_q (0-6)  → track-level
+                # slider6: max_note_duration_q (0-6)  → track-level
                 # slider7: polyphony_hard_limit (0-16)
                 # slider8: autoregressive (0-1)
                 # slider9: ignore (0-1)
                 try:
-                    density = int(RPR_TrackFX_GetParam(track, fx_loc, 1, 0, 0)[0])
-                    min_poly = int(RPR_TrackFX_GetParam(track, fx_loc, 2, 0, 0)[0])
-                    max_poly = int(RPR_TrackFX_GetParam(track, fx_loc, 3, 0, 0)[0])
-                    min_dur = int(RPR_TrackFX_GetParam(track, fx_loc, 4, 0, 0)[0])
-                    max_dur = int(RPR_TrackFX_GetParam(track, fx_loc, 5, 0, 0)[0])
+                    density    = int(RPR_TrackFX_GetParam(track, fx_loc, 1, 0, 0)[0])
+                    min_poly   = int(RPR_TrackFX_GetParam(track, fx_loc, 2, 0, 0)[0])
+                    max_poly   = int(RPR_TrackFX_GetParam(track, fx_loc, 3, 0, 0)[0])
+                    min_dur    = int(RPR_TrackFX_GetParam(track, fx_loc, 4, 0, 0)[0])
+                    max_dur    = int(RPR_TrackFX_GetParam(track, fx_loc, 5, 0, 0)[0])
                     poly_limit = int(RPR_TrackFX_GetParam(track, fx_loc, 6, 0, 0)[0])
 
-                    is_ar = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 7, 0, 0)[0]))
+                    is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 7, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 8, 0, 0)[0]))
 
-                    if density > 0: attrs["note_density"] = density - 1
-                    if min_poly > 0: attrs["min_polyphony"] = min_poly - 1
-                    if max_poly > 0: attrs["max_polyphony"] = max_poly - 1
-                    if min_dur > 0: attrs["min_note_duration"] = min_dur - 1
-                    if max_dur > 0: attrs["max_note_duration"] = max_dur - 1
-                    if poly_limit > 0: attrs["onset_polyphony"] = poly_limit
+                    if density    > 0: attrs["note_density"]     = density - 1
+                    if min_poly   > 0: attrs["min_polyphony"]    = min_poly - 1
+                    if max_poly   > 0: attrs["max_polyphony"]    = max_poly - 1
+                    if min_dur    > 0: attrs["min_note_duration"] = min_dur - 1
+                    if max_dur    > 0: attrs["max_note_duration"] = max_dur - 1
+                    if poly_limit > 0: attrs["onset_polyphony"]  = poly_limit
                 except Exception as e:
-                    print(f"Error reading Yellow/Ghost JSFX for track {i}: {e}\n")
+                    print(f"Error reading Yellow JSFX for track {i}: {e}\n")
 
         # Determine target bars to generate
         if is_ignored:
@@ -299,13 +342,20 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
         else:
             bars_to_gen = [b for b in range(num_measures) if extraction.masks.is_masked(i, b)]
 
+        # Apply bar-level attrs to every bar being generated
+        per_bar_attributes = (
+            {b: dict(bar_attrs) for b in bars_to_gen}
+            if bar_attrs and bars_to_gen else {}
+        )
+
         tracks_prompts.append({
             "id": i,
             "bars": bars_to_gen,
             "autoregressive": is_ar,
             "ignore": is_ignored,
             "mask_bars": [],
-            "attributes": attrs
+            "attributes": attrs,
+            "bar_attributes": per_bar_attributes,
         })
 
     return tracks_prompts
@@ -457,8 +507,15 @@ def run_midigpt_infill():
     attributes = info.get("attributes", {})
     resolution = info.get("resolution", 12)
 
-    model_type = "expressive" if "nomml" in attributes else "yellow"
-    track_fx_id = TRACK_FX_EXPRESSIVE_ID if model_type == "expressive" else TRACK_FX_YELLOW_ID
+    if "nomml" in attributes:
+        model_type = "expressive"
+        track_fx_id = TRACK_FX_EXPRESSIVE_ID
+    elif "key_signature" in attributes:
+        model_type = "prism"
+        track_fx_id = TRACK_FX_PRISM_ID
+    else:
+        model_type = "yellow"
+        track_fx_id = TRACK_FX_YELLOW_ID
 
     print(f"Active Checkpoint : {checkpoint}")
     print(f"Model Type        : {model_type.upper()}")
@@ -499,7 +556,7 @@ def run_midigpt_infill():
     print("Track prompts built:")
     for tp in track_prompts:
         if tp["bars"] or tp["autoregressive"] or tp["ignore"]:
-            print(f"  Track {tp['id']}: bars_to_gen={tp['bars']} AR={tp['autoregressive']} ignore={tp['ignore']} attrs={tp['attributes']}")
+            print(f"  Track {tp['id']}: bars_to_gen={tp['bars']} AR={tp['autoregressive']} ignore={tp['ignore']} attrs={tp['attributes']} bar_attrs={tp['bar_attributes']}")
     print()
 
     # ---- 5. Serialize to Score JSON -------------------------------------- #
