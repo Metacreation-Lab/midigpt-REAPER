@@ -219,6 +219,7 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
         is_ignored = False
         attrs = {}
         bar_attrs = {}
+        is_drum_track = getattr(track_info, 'instrument', 0) == 128
 
         if fx_loc >= 0:
             if model_type == "expressive":
@@ -228,9 +229,9 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                 # slider4: silence_proportion (0-10)  → track-level
                 # slider5: min_note_duration_q (0-6)  → track-level
                 # slider6: max_note_duration_q (0-6)  → track-level
-                # slider7: density (0-10)             → bar-level
-                # slider8: min_polyphony_q (0-10)     → bar-level
-                # slider9: max_polyphony_q (0-10)     → bar-level
+                # slider7: density (0-10)             → bar-level (bar_note_density)
+                # slider8: min_polyphony_q (0-10)     → bar-level (bar_min_polyphony)
+                # slider9: max_polyphony_q (0-10)     → bar-level (bar_max_polyphony)
                 # slider10: pitch_class_set (0-13)    → bar-level
                 # slider11: nomml (0-13)              → track-level
                 # slider12: autoregressive (0-1)
@@ -257,10 +258,10 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     if max_dur   > 0: attrs["max_note_duration"]   = max_dur - 1
                     if nomml     > 0: attrs["nomml"]               = nomml - 1
 
-                    if density  > 0: bar_attrs["note_density"]   = density - 1
-                    if min_poly > 0: bar_attrs["min_polyphony"]  = min_poly - 1
-                    if max_poly > 0: bar_attrs["max_polyphony"]  = max_poly - 1
-                    if pcs      > 0: bar_attrs["pitch_class_set"] = pcs - 1
+                    if density  > 0 and is_drum_track: bar_attrs["bar_note_density"]   = density - 1
+                    if min_poly > 0: bar_attrs["bar_min_polyphony"]  = min_poly - 1
+                    if max_poly > 0: bar_attrs["bar_max_polyphony"]  = max_poly - 1
+                    if pcs      > 0: bar_attrs["pitch_class_set"]    = pcs - 1
                 except Exception as e:
                     print(f"Error reading Expressive JSFX for track {i}: {e}\n")
 
@@ -271,9 +272,9 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                 # slider4: silence_proportion (0-10)  → track-level
                 # slider5: min_note_duration_q (0-6)  → track-level
                 # slider6: max_note_duration_q (0-6)  → track-level
-                # slider7: density (0-10)             → bar-level
-                # slider8: min_polyphony_q (0-10)     → bar-level
-                # slider9: max_polyphony_q (0-10)     → bar-level
+                # slider7: density (0-10)             → bar-level (bar_note_density)
+                # slider8: min_polyphony_q (0-10)     → bar-level (bar_min_polyphony)
+                # slider9: max_polyphony_q (0-10)     → bar-level (bar_max_polyphony)
                 # slider10: pitch_class_set (0-13)    → bar-level
                 # slider11: autoregressive (0-1)
                 # slider12: ignore (0-1)
@@ -297,10 +298,10 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     if min_dur   > 0: attrs["min_note_duration"]  = min_dur - 1
                     if max_dur   > 0: attrs["max_note_duration"]  = max_dur - 1
 
-                    if density  > 0: bar_attrs["note_density"]   = density - 1
-                    if min_poly > 0: bar_attrs["min_polyphony"]  = min_poly - 1
-                    if max_poly > 0: bar_attrs["max_polyphony"]  = max_poly - 1
-                    if pcs      > 0: bar_attrs["pitch_class_set"] = pcs - 1
+                    if density  > 0 and is_drum_track: bar_attrs["bar_note_density"]   = density - 1
+                    if min_poly > 0: bar_attrs["bar_min_polyphony"]  = min_poly - 1
+                    if max_poly > 0: bar_attrs["bar_max_polyphony"]  = max_poly - 1
+                    if pcs      > 0: bar_attrs["pitch_class_set"]    = pcs - 1
                 except Exception as e:
                     print(f"Error reading Prism JSFX for track {i}: {e}\n")
 
@@ -325,7 +326,7 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 7, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 8, 0, 0)[0]))
 
-                    if density    > 0: attrs["note_density"]     = density - 1
+                    if density    > 0 and is_drum_track: attrs["note_density"]     = density - 1
                     if min_poly   > 0: attrs["min_polyphony"]    = min_poly - 1
                     if max_poly   > 0: attrs["max_polyphony"]    = max_poly - 1
                     if min_dur    > 0: attrs["min_note_duration"] = min_dur - 1
