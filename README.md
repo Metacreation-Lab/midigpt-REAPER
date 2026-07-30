@@ -72,6 +72,22 @@ The model sees your existing MIDI as context and generates new notes for the bar
 
 ## Installation
 
+### One-Line Install (macOS / Linux)
+
+Paste this into a terminal — it installs everything and offers to start the server immediately:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Metacreation-Lab/midigpt-REAPER/main/bootstrap.sh | bash
+```
+
+**Requirements:** Python 3.10, 3.11, or 3.12 and `git`. If Python is missing, the installer will tell you exactly how to get it for your OS (Homebrew on macOS, `apt` on Ubuntu/Debian, or python.org for anything else). After installing, re-run the same command.
+
+**To update later:** `cd ~/midigpt-REAPER && ./update.sh`
+
+**To uninstall:** `cd ~/midigpt-REAPER && ./uninstall.sh`
+
+---
+
 ### Quick Install (Release Package)
 
 Download the release zip, extract it, and double-click the installer for your OS:

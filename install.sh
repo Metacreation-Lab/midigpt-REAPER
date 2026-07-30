@@ -150,27 +150,46 @@ if [ "$SKIP_DEPS" = false ]; then
         warn "Missing dependencies: ${MISSING[*]}"
         echo ""
 
-        if [ "$PLATFORM" = "macos" ]; then
+        # Try to auto-install git on macOS via Homebrew
+        if [[ " ${MISSING[*]} " == *"git"* ]] && [ "$PLATFORM" = "macos" ]; then
             if check_cmd brew; then
-                info "Installing via Homebrew..."
+                info "Installing git via Homebrew..."
                 brew install git || fail "Homebrew install failed"
             else
+                echo "  Install Homebrew first, then re-run:"
+                echo '    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
                 echo ""
-                echo "Please install Homebrew first:"
-                echo '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-                echo ""
-                echo "Then re-run this installer."
                 fail "Homebrew not found"
             fi
-        elif [ "$PLATFORM" = "linux" ]; then
+        elif [[ " ${MISSING[*]} " == *"git"* ]] && [ "$PLATFORM" = "linux" ]; then
+            fail "Please install git (e.g. sudo apt install git) then re-run"
+        fi
+
+        # Python missing — give platform-specific install guidance
+        if [[ " ${MISSING[*]} " == *"python"* ]]; then
+            echo "  Python 3.10, 3.11, or 3.12 is required. Install options:"
             echo ""
-            echo "Please install git manually."
+            if [ "$PLATFORM" = "macos" ]; then
+                echo "  Option A — Homebrew (recommended):"
+                echo "    brew install python@3.12"
+                echo ""
+                echo "  Option B — Official installer:"
+                echo "    https://www.python.org/downloads/"
+                echo "    Download Python 3.12 for macOS and run the .pkg"
+            elif [ "$PLATFORM" = "linux" ]; then
+                echo "  Ubuntu/Debian:"
+                echo "    sudo apt update && sudo apt install python3.12 python3.12-venv"
+                echo ""
+                echo "  Other distros: https://www.python.org/downloads/"
+            else
+                echo "  Download Python 3.12 from: https://www.python.org/downloads/"
+            fi
             echo ""
-            fail "Please install git and re-run"
+            echo "  After installing Python, re-run this installer."
+            fail "Python >= $PYTHON_MIN_VERSION is required"
         fi
     fi
 
-    [ -z "$PYTHON_CMD" ] && fail "Python >= $PYTHON_MIN_VERSION required but not found"
     ok "All system dependencies satisfied"
 
 else
