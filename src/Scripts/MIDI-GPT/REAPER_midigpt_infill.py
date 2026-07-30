@@ -337,12 +337,21 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     print(f"Error reading Yellow JSFX for track {i}: {e}\n")
 
         # Determine target bars to generate
+        masked_bars = [b for b in range(num_measures) if extraction.masks.is_masked(i, b)]
+
         if is_ignored:
             bars_to_gen = []
+            is_ar = False
         elif is_ar:
-            bars_to_gen = list(range(num_measures))
+            if masked_bars:
+                # AR fires only when at least one item on this track is selected
+                bars_to_gen = list(range(num_measures))
+            else:
+                # AR is toggled but nothing selected on this track -- skip silently
+                bars_to_gen = []
+                is_ar = False
         else:
-            bars_to_gen = [b for b in range(num_measures) if extraction.masks.is_masked(i, b)]
+            bars_to_gen = masked_bars
 
         # Apply bar-level attrs to every bar being generated
         per_bar_attributes = (
@@ -454,10 +463,8 @@ def write_generated_score(score_dict: dict, extraction) -> None:
     resolution = score_dict.get("resolution", 12)
     writer = REAPERMIDIWriter(extraction.tempo_map)
 
-    # Precompute which track IDs are autoregressive
+    # Precompute which track IDs are autoregressive (only those that actually fire)
     ar_track_ids = {tp["id"] for tp in extraction.track_prompts if tp.get("autoregressive")}
-    if ar_track_ids:
-        print(f"WARNING: Tracks {sorted(ar_track_ids)} have Autoregressive ON - ALL bars will be regenerated.\n")
 
     resp_tracks = score_dict.get("tracks", [])
     if len(resp_tracks) != extraction.song.num_tracks:
