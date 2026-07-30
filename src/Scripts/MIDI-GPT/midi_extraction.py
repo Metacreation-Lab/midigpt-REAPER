@@ -526,6 +526,21 @@ class REAPERMIDIExtractor:
                 self.tempo_map.add_tempo(timepos, bpm)
                 self.tempo_map.add_time_signature(timepos, timesig_num, timesig_denom)
     
+    def _detect_instrument(self, track, track_name: str) -> int:
+        """Detect instrument number. MIDI channel 9 notes mean drums (GM channel 10)."""
+        num_items = RPR_CountTrackMediaItems(track)
+        for j in range(num_items):
+            item = RPR_GetTrackMediaItem(track, j)
+            take = RPR_GetActiveTake(item)
+            if not take or not RPR_TakeIsMIDI(take):
+                continue
+            retval, _, note_count, _, _ = RPR_MIDI_CountEvts(take, 0, 0, 0)
+            for n in range(min(note_count, 32)):
+                note_info = RPR_MIDI_GetNote(take, n, 0, 0, 0, 0, 0, 0, 0)
+                if note_info[0] and note_info[7] == 9:
+                    return 128
+        return get_instrument_from_track_name(track_name)
+
     def _get_midi_tracks_with_info(self) -> List[TrackInfo]:
         """Get list of tracks that have at least one MIDI item (even if empty)."""
         track_info_list = []
@@ -551,10 +566,11 @@ class REAPERMIDIExtractor:
                 # Get track name
                 retval, track_obj, flags_out = RPR_GetTrackState(track, 0)
                 track_name = retval if retval else f"Track {i+1}"
-                
-                # Get instrument from track name
-                instrument = get_instrument_from_track_name(track_name)
-                
+
+                # Detect instrument: MIDI channel 9 (GM drums) takes priority
+                # over name-based heuristics, which are unreliable.
+                instrument = self._detect_instrument(track, track_name)
+
                 track_info = TrackInfo(
                     track_index=len(track_info_list),
                     track=track,

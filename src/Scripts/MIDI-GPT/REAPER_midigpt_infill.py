@@ -251,17 +251,17 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 11, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 12, 0, 0)[0]))
 
-                    if key_sig   > 0: attrs["key_signature"]      = key_sig - 1
-                    if pitch_rng > 0: attrs["pitch_range"]         = pitch_rng - 1
+                    if key_sig   > 0 and not is_drum_track: attrs["key_signature"]      = key_sig - 1
+                    if pitch_rng > 0 and not is_drum_track: attrs["pitch_range"]         = pitch_rng - 1
                     if silence   > 0: attrs["silence_proportion"]  = silence - 1
-                    if min_dur   > 0: attrs["min_note_duration"]   = min_dur - 1
-                    if max_dur   > 0: attrs["max_note_duration"]   = max_dur - 1
+                    if min_dur   > 0 and not is_drum_track: attrs["min_note_duration"]   = min_dur - 1
+                    if max_dur   > 0 and not is_drum_track: attrs["max_note_duration"]   = max_dur - 1
                     if nomml     > 0: attrs["nomml"]               = nomml - 1
 
-                    if density  > 0 and is_drum_track: bar_attrs["bar_note_density"]   = density - 1
-                    if min_poly > 0: bar_attrs["bar_min_polyphony"]  = min_poly - 1
-                    if max_poly > 0: bar_attrs["bar_max_polyphony"]  = max_poly - 1
-                    if pcs      > 0: bar_attrs["pitch_class_set"]    = pcs - 1
+                    if density  > 0 and is_drum_track:     bar_attrs["bar_note_density"]  = density - 1
+                    if min_poly > 0 and not is_drum_track: bar_attrs["bar_min_polyphony"] = min_poly - 1
+                    if max_poly > 0 and not is_drum_track: bar_attrs["bar_max_polyphony"] = max_poly - 1
+                    if pcs      > 0 and not is_drum_track: bar_attrs["pitch_class_set"]   = pcs - 1
                 except Exception as e:
                     print(f"Error reading Expressive JSFX for track {i}: {e}\n")
 
@@ -292,16 +292,16 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 10, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 11, 0, 0)[0]))
 
-                    if key_sig   > 0: attrs["key_signature"]     = key_sig - 1
-                    if pitch_rng > 0: attrs["pitch_range"]        = pitch_rng - 1
+                    if key_sig   > 0 and not is_drum_track: attrs["key_signature"]     = key_sig - 1
+                    if pitch_rng > 0 and not is_drum_track: attrs["pitch_range"]        = pitch_rng - 1
                     if silence   > 0: attrs["silence_proportion"] = silence - 1
-                    if min_dur   > 0: attrs["min_note_duration"]  = min_dur - 1
-                    if max_dur   > 0: attrs["max_note_duration"]  = max_dur - 1
+                    if min_dur   > 0 and not is_drum_track: attrs["min_note_duration"]  = min_dur - 1
+                    if max_dur   > 0 and not is_drum_track: attrs["max_note_duration"]  = max_dur - 1
 
-                    if density  > 0 and is_drum_track: bar_attrs["bar_note_density"]   = density - 1
-                    if min_poly > 0: bar_attrs["bar_min_polyphony"]  = min_poly - 1
-                    if max_poly > 0: bar_attrs["bar_max_polyphony"]  = max_poly - 1
-                    if pcs      > 0: bar_attrs["pitch_class_set"]    = pcs - 1
+                    if density  > 0 and is_drum_track:     bar_attrs["bar_note_density"]  = density - 1
+                    if min_poly > 0 and not is_drum_track: bar_attrs["bar_min_polyphony"] = min_poly - 1
+                    if max_poly > 0 and not is_drum_track: bar_attrs["bar_max_polyphony"] = max_poly - 1
+                    if pcs      > 0 and not is_drum_track: bar_attrs["pitch_class_set"]   = pcs - 1
                 except Exception as e:
                     print(f"Error reading Prism JSFX for track {i}: {e}\n")
 
@@ -326,12 +326,13 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
                     is_ar      = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 7, 0, 0)[0]))
                     is_ignored = bool(round(RPR_TrackFX_GetParam(track, fx_loc, 8, 0, 0)[0]))
 
-                    if density    > 0 and is_drum_track: attrs["note_density"]     = density - 1
-                    if min_poly   > 0: attrs["min_polyphony"]    = min_poly - 1
-                    if max_poly   > 0: attrs["max_polyphony"]    = max_poly - 1
-                    if min_dur    > 0: attrs["min_note_duration"] = min_dur - 1
-                    if max_dur    > 0: attrs["max_note_duration"] = max_dur - 1
-                    if poly_limit > 0: attrs["onset_polyphony"]  = poly_limit
+                    if density  > 0 and is_drum_track:     attrs["note_density"]      = density - 1
+                    if min_poly > 0 and not is_drum_track: attrs["min_polyphony"]     = min_poly - 1
+                    if max_poly > 0 and not is_drum_track: attrs["max_polyphony"]     = max_poly - 1
+                    if min_dur  > 0 and not is_drum_track: attrs["min_note_duration"] = min_dur - 1
+                    if max_dur  > 0 and not is_drum_track: attrs["max_note_duration"] = max_dur - 1
+                    # poly_limit (slider7) maps to config-level polyphony_hard_limit,
+                    # not a per-track attribute; set it via Global Options JSFX instead
                 except Exception as e:
                     print(f"Error reading Yellow JSFX for track {i}: {e}\n")
 
@@ -348,6 +349,16 @@ def get_track_prompts(num_measures: int, model_type: str, track_fx_id: float, ex
             {b: dict(bar_attrs) for b in bars_to_gen}
             if bar_attrs and bars_to_gen else {}
         )
+
+        if is_ignored:
+            role = "IGNORE"
+        elif is_ar:
+            role = f"AR (all {num_measures} bars)"
+        elif bars_to_gen:
+            role = f"INFILL bars={bars_to_gen}"
+        else:
+            role = "CONTEXT only"
+        print(f"  Track {i} ({track_info.track_name}): {role}\n")
 
         tracks_prompts.append({
             "id": i,
@@ -443,21 +454,24 @@ def write_generated_score(score_dict: dict, extraction) -> None:
     resolution = score_dict.get("resolution", 12)
     writer = REAPERMIDIWriter(extraction.tempo_map)
 
-    for track_idx, track_data in enumerate(score_dict.get("tracks", [])):
+    # Precompute which track IDs are autoregressive
+    ar_track_ids = {tp["id"] for tp in extraction.track_prompts if tp.get("autoregressive")}
+    if ar_track_ids:
+        print(f"WARNING: Tracks {sorted(ar_track_ids)} have Autoregressive ON - ALL bars will be regenerated.\n")
+
+    resp_tracks = score_dict.get("tracks", [])
+    if len(resp_tracks) != extraction.song.num_tracks:
+        print(f"WARNING: Response has {len(resp_tracks)} tracks but extraction has {extraction.song.num_tracks}.\n")
+
+    for track_idx, track_data in enumerate(resp_tracks):
         track_info = extraction.song.get_track_info(track_idx)
         if not track_info:
             continue
 
         for bar_idx, bar_data in enumerate(track_data.get("bars", [])):
-            # Only write back generated bars (marked as masks or autoregressive)
+            # Only write back generated bars (masked or autoregressive)
             if not extraction.masks.is_masked(track_idx, bar_idx):
-                # Check if track prompt had autoregressive enabled
-                is_ar = False
-                for tp in extraction.track_prompts:
-                    if tp["id"] == track_idx and tp["autoregressive"]:
-                        is_ar = True
-                        break
-                if not is_ar:
+                if track_idx not in ar_track_ids:
                     continue
 
             measure = extraction.song.get_measure(track_idx, bar_idx)
@@ -550,15 +564,17 @@ def run_midigpt_infill():
     print(f"Masked   : {extraction.masks.count} (track, bar) positions\n")
 
     # ---- 4. Read per-track options --------------------------------------- #
+    print("Track roles:")
     track_prompts = get_track_prompts(num_measures, model_type, track_fx_id, extraction)
     # Stash prompts in extraction result for write-back filtering
     extraction.track_prompts = track_prompts
 
-    print("Track prompts built:")
-    for tp in track_prompts:
-        if tp["bars"] or tp["autoregressive"] or tp["ignore"]:
-            print(f"  Track {tp['id']}: bars_to_gen={tp['bars']} AR={tp['autoregressive']} ignore={tp['ignore']} attrs={tp['attributes']} bar_attrs={tp['bar_attributes']}")
-    print()
+    ar_tracks = [tp["id"] for tp in track_prompts if tp["autoregressive"]]
+    if ar_tracks:
+        print(f"\nWARNING: Track(s) {ar_tracks} have Autoregressive ON.")
+        print("All bars in those tracks will regenerate regardless of selection.\n")
+    else:
+        print()
 
     # ---- 5. Serialize to Score JSON -------------------------------------- #
     print("Converting MIDI data...")
