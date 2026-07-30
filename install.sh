@@ -481,7 +481,51 @@ fi
 echo "  Or from terminal: cd $REPO_DIR && source .venv/bin/activate && midigpt-http"
 echo ""
 
-if [ -n "${MIDIGPT_INTERACTIVE:-}" ]; then
+# ====================================================================
+# Interactive: Launch server now?
+# ====================================================================
+
+if [ -t 0 ]; then
+    echo ""
+    echo -e "${BOLD}----------------------------------------------------${NC}"
+    echo -e "${BOLD}  Launch Server${NC}"
+    echo -e "${BOLD}----------------------------------------------------${NC}"
+    echo ""
+    echo "  Would you like to start the MIDI-GPT server now?"
+    echo ""
+    read -rp "  Launch server? [Y/n]: " _LAUNCH
+    _LAUNCH="${_LAUNCH:-y}"
+
+    if [[ "$_LAUNCH" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo -e "${BOLD}  Select a model:${NC}"
+        echo ""
+        echo "    [1] Yellow     - General purpose, recommended (yellow_medium)"
+        echo "    [2] Prism      - Extended controls (prism_medium)"
+        echo "    [3] Expressive - Microtiming + velocity (expressive_medium)"
+        echo ""
+        read -rp "  Model [1/2/3, default=1]: " _MODEL_CHOICE
+
+        case "${_MODEL_CHOICE:-1}" in
+            2) _MODEL="prism_medium"      ; _LABEL="Prism"      ;;
+            3) _MODEL="expressive_medium" ; _LABEL="Expressive" ;;
+            *) _MODEL="yellow_medium"     ; _LABEL="Yellow"     ;;
+        esac
+
+        echo ""
+        echo -e "${BOLD}  Starting MIDI-GPT server (${_LABEL})...${NC}"
+        echo "  Keep this terminal open while using MIDI-GPT in REAPER."
+        echo "  Press Ctrl+C to stop the server."
+        echo ""
+        bash "$REPO_DIR/start_midigpt_server.sh" --pretrained "$_MODEL"
+    else
+        echo ""
+        echo -e "${BOLD}Next steps:${NC}"
+        echo "  Start the server later with:"
+        echo -e "    ${GREEN}cd $REPO_DIR && ./start_midigpt_server.sh${NC}"
+        echo ""
+    fi
+elif [ -n "${MIDIGPT_INTERACTIVE:-}" ]; then
     echo ""
     read -rp "Press Enter to close this window..."
 fi
