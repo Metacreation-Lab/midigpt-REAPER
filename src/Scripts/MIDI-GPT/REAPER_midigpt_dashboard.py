@@ -755,11 +755,15 @@ def draw_track_controls(track_params):
         # Density only ever affects drum tracks, and Polyphony/Note
         # Duration/Key Signature/Pitch Range/Pitch Class Set only ever
         # affect melodic tracks -- infill.py's _compute_track_prompt_fields
-        # silently drops whichever half doesn't apply. Detect track type
-        # (same heuristic Setup Tracks uses) so we only show the half that
-        # actually does something; None (undetectable) shows both rather
+        # silently drops whichever half doesn't apply. The track name is
+        # ground truth for instrument identity (Setup Tracks' MIDI-content
+        # detection only exists to auto-assign that name once); only fall
+        # back to MIDI-content detection for a track that hasn't been
+        # named/resolved yet. None (neither resolves) shows both rather
         # than guessing wrong.
-        instrument = setup_tracks.detect_track_instrument(track)
+        instrument = setup_tracks.GM_NAME_TO_INSTRUMENT.get(name.strip())
+        if instrument is None:
+            instrument = setup_tracks.detect_track_instrument(track)
         is_drum = (instrument == 128) if instrument is not None else None
 
         header = f"{i + 1}. {name}"
