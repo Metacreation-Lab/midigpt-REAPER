@@ -15,27 +15,25 @@ def main():
         return
     
     print(f"Setting up REAPER integration at: {reaper_path}")
-    
+
     project_root = Path.cwd()
     scripts_src = project_root / "src" / "Scripts" / "MIDI-GPT"
-    effects_src = project_root / "src" / "Effects" / "MIDI-GPT"
 
-    print(f"Linking:\n    - {scripts_src}\n    - {effects_src}")
-    
+    print(f"Linking:\n    - {scripts_src}")
+
     scripts_dst = reaper_path / "Scripts" / "MIDI-GPT"
-    effects_dst = reaper_path / "Effects" / "MIDI-GPT"
-    
+
     if scripts_src.exists():
         if scripts_dst.exists():
             scripts_dst.unlink()
         scripts_dst.symlink_to(scripts_src)
         print(f"Scripts symlinked: {scripts_dst}")
-    
-    if effects_src.exists():
-        if effects_dst.exists():
-            effects_dst.unlink()
-        effects_dst.symlink_to(effects_src)
-        print(f"Effects symlinked: {effects_dst}")
+
+    user_plugins = reaper_path / "UserPlugins"
+    if not any(user_plugins.glob("*imgui*")) and not any(user_plugins.glob("*ImGui*")):
+        print("\nWARNING: ReaImGui extension not found -- the dashboard UI needs it.")
+        print("  In REAPER: Extensions > ReaPack > Browse packages > search 'ReaImGui'")
+        print("  (Don't have ReaPack? Get it first: https://reapack.com/)")
 
 if __name__ == "__main__":
     main()

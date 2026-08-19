@@ -511,16 +511,19 @@ class REAPERMIDIExtractor:
         num_tempo_markers = RPR_CountTempoTimeSigMarkers(0)
         for i in range(num_tempo_markers):
             marker_info = RPR_GetTempoTimeSigMarker(0, i, 0, 0, 0, 0, 0, 0, 0)
-            if len(marker_info) < 8:
+            if len(marker_info) < 10:
                 raise RuntimeError(
                     f"Unexpected RPR_GetTempoTimeSigMarker result length: {len(marker_info)}"
                 )
 
+            # Return tuple echoes back the input args (proj, ptidx) before the
+            # outputs: (retval, proj, ptidx, timepos, measurepos, beatpos,
+            # bpm, timesig_num, timesig_denom, lineartempo)
             retval = marker_info[0]
-            timepos = marker_info[1]
-            bpm = marker_info[4]
-            timesig_num = marker_info[5]
-            timesig_denom = marker_info[6]
+            timepos = marker_info[3]
+            bpm = marker_info[6]
+            timesig_num = marker_info[7]
+            timesig_denom = marker_info[8]
             
             if retval:
                 self.tempo_map.add_tempo(timepos, bpm)

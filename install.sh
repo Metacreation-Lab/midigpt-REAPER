@@ -6,8 +6,13 @@
 #   1. System dependencies (git, python)
 #   2. Python virtual environment + torch
 #   3. MIDI-GPT backend library
-#   4. REAPER symlinks (Scripts + Effects)
+#   4. REAPER symlinks (Scripts)
 #   5. Verification of installation
+#
+# The plugin's dashboard UI also requires the ReaImGui REAPER extension,
+# which this installer cannot install for you (it's a REAPER extension, not
+# a Python package) -- it checks whether it's present and tells you how to
+# get it via ReaPack if not.
 #
 # Usage:
 #   ./install.sh              # Full install
@@ -318,8 +323,7 @@ fi
 
 if [ -d "$REAPER_DIR" ]; then
     for pair in \
-        "$REPO_DIR/src/Scripts/MIDI-GPT:$REAPER_DIR/Scripts/MIDI-GPT" \
-        "$REPO_DIR/src/Effects/MIDI-GPT:$REAPER_DIR/Effects/MIDI-GPT"
+        "$REPO_DIR/src/Scripts/MIDI-GPT:$REAPER_DIR/Scripts/MIDI-GPT"
     do
         src="${pair%%:*}"
         dst="${pair##*:}"
@@ -329,6 +333,12 @@ if [ -d "$REAPER_DIR" ]; then
         ln -sf "$src" "$dst"
     done
     ok "REAPER symlinks created"
+
+    if ! find "$REAPER_DIR/UserPlugins" -iname "*imgui*" 2>/dev/null | grep -q .; then
+        warn "ReaImGui extension not found — the dashboard UI needs it"
+        echo "  In REAPER: Extensions > ReaPack > Browse packages > search 'ReaImGui' > install > restart REAPER"
+        echo "  (Don't have ReaPack? Get it first: https://reapack.com/)"
+    fi
 else
     warn "REAPER config directory not found — REAPER may not be installed yet"
 fi
@@ -479,13 +489,22 @@ echo ""
 
 echo -e "${BOLD}Next steps in REAPER:${NC}"
 echo ""
-echo "  1. Load the ReaScript action:"
+echo "  1. Load the ReaScript actions:"
 echo "     Actions > Show Action List > Load ReaScript"
+echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_dashboard.py   (primary UI)"
 echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_infill.py"
+echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_set_server.py"
+echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_setup_tracks.py"
+echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_set_soundfont_template.py"
+echo "     Select: $REAPER_DIR/Scripts/MIDI-GPT/REAPER_midigpt_apply_soundfont_template.py"
 echo ""
-echo "  2. Add JSFX plugins:"
-echo "     - Add 'MIDI-GPT Global Options' to Monitor FX (View > Monitoring Effects)"
-echo "     - Add 'MIDI-GPT Track Options (Yellow)', '(Prism)', or '(Expressive)' to tracks"
+echo "  2. Run 'MIDI-GPT: Dashboard' — it's a single window for the whole"
+echo "     workflow (global options, per-track controls, running generation)."
+echo "     Needs the ReaImGui extension -- see the warning above if it's missing."
+echo ""
+echo "  If the MIDI-GPT server runs on a different machine, run the"
+echo "  'MIDI-GPT: Set server address' action and enter its IP/domain and port"
+echo "  (e.g. http://192.168.1.20:3456). Defaults to http://127.0.0.1:3456."
 echo ""
 echo -e "${BOLD}To start the server:${NC}"
 if [ -d "$HOME/Desktop" ]; then

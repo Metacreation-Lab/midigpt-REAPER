@@ -19,7 +19,8 @@ echo   ╔═══════════════════════�
 echo   ║      MIDI-GPT Server Starting...     ║
 echo   ╚══════════════════════════════════════╝
 echo.
-echo   The server will listen on 127.0.0.1:3456
+echo   The server will listen on port 3456 on all network interfaces
+echo   (reachable from other machines as this PC's IP address).
 echo   Keep this window open while using MIDI-GPT in REAPER.
 echo   Press Ctrl+C to stop the server.
 echo.

@@ -98,14 +98,8 @@ cp "$SCRIPT_DIR/scripts/setup.py" "$RELEASE_DIR/scripts/"
 
 # ── Source: Scripts (REAPER script, extraction) ──
 mkdir -p "$RELEASE_DIR/src/Scripts/MIDI-GPT"
-for f in REAPER_midigpt_infill.py midi_extraction.py; do
+for f in REAPER_midigpt_infill.py REAPER_midigpt_set_server.py REAPER_midigpt_setup_tracks.py REAPER_midigpt_set_soundfont_template.py REAPER_midigpt_apply_soundfont_template.py REAPER_midigpt_dashboard.py midi_extraction.py; do
     cp "$SCRIPT_DIR/src/Scripts/MIDI-GPT/$f" "$RELEASE_DIR/src/Scripts/MIDI-GPT/$f"
-done
-
-# ── Source: Effects (JSFX) ──
-mkdir -p "$RELEASE_DIR/src/Effects/MIDI-GPT"
-for f in "MIDI-GPT Global Options.js" "MIDI-GPT Track Options (Yellow).js" "MIDI-GPT Track Options (Prism).js" "MIDI-GPT Track Options (Expressive).js"; do
-    cp "$SCRIPT_DIR/src/Effects/MIDI-GPT/$f" "$RELEASE_DIR/src/Effects/MIDI-GPT/$f"
 done
 
 ok "Source copied"
@@ -159,7 +153,7 @@ echo "  File: $OUTPUT"
 echo "  Size: $RELEASE_SIZE"
 echo ""
 echo "  Contents:"
-echo "    - midigpt-REAPER client scripts & JSFX"
+echo "    - midigpt-REAPER client scripts (dashboard UI)"
 echo "    - Installers & launchers"
 echo ""
 echo "  Users extract the zip and double-click the installer for their OS."

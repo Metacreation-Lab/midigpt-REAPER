@@ -78,8 +78,8 @@ This ensures REAPER detects newly installed VST instruments.
 2. Add **Sforzando** as an FX instrument
 3. Inside Sforzando:
 
-    * Click on `Intrument → import` then select the **Arachno `.sf2` file**
-    * Select an instrument by clicking on `Intrument → converted → sf2 → ...`
+    * Click on `Instrument → import` then select the **Arachno `.sf2` file**
+    * Select an instrument by clicking on `Instrument → converted → sf2 → ...`
 
 * Each program number corresponds to a GM instrument
 * This mapping is required for correct playback of generated MIDI

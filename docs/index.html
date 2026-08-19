@@ -370,7 +370,7 @@ AI-powered multi-track MIDI generation plugin for [REAPER](https://www.reaper.fm
 
 - **Fill in missing bars** — select a region and the model generates notes that fit your existing arrangement
 - **Generate new tracks** — create empty bars, name the track by instrument, and let the model compose from scratch
-- **Steer the output** — control density, polyphony, and note duration per track with JSFX sliders
+- **Steer the output** — control density, polyphony, and note duration per track from the dashboard
 - **Iterative refinement** — regenerate any bar, track, or region until you get what you want
 - **Context-aware** — the model reads surrounding MIDI and produces results that fit the key, groove, and texture
 
@@ -396,10 +396,12 @@ AI-powered multi-track MIDI generation plugin for [REAPER](https://www.reaper.fm
     - [Generating into Empty Tracks](#generating-into-empty-tracks)
     - [Tips and Common Gotchas](#tips-and-common-gotchas)
   - [Controls Reference](#controls-reference)
-    - [Global Options (Monitor FX or Master Track)](#global-options-monitor-fx-or-master-track)
-    - [Track Options (Per-Track FX)](#track-options-per-track-fx)
-      - [Yellow-Ghost Model Parameters](#yellow-ghost-model-parameters)
+    - [Global Options](#global-options)
+    - [Track Controls (Per-Track)](#track-controls-per-track)
+      - [Yellow Model Parameters](#yellow-model-parameters)
+      - [Prism Model Parameters](#prism-model-parameters)
       - [Expressive Model Parameters](#expressive-model-parameters)
+      - [Pitch Mask & Remix](#pitch-mask--remix-all-models-if-the-loaded-checkpoint-supports-them)
   - [Running Tests](#running-tests)
   - [Building a Release Package](#building-a-release-package)
 
@@ -409,9 +411,9 @@ AI-powered multi-track MIDI generation plugin for [REAPER](https://www.reaper.fm
 
 MIDI-GPT for REAPER has three components:
 
-1. **Inference Server** (`midigpt-http`) — Starts a stateless FastAPI server listening for generation requests on `127.0.0.1:3456`.
-2. **REAPER Script** (`REAPER_midigpt_infill.py`) — Reads your REAPER session (MIDI, instruments, control values), sends a generation payload to the server, and writes the result back into your project.
-3. **JSFX Controls** — Lightweight REAPER effects that give you sliders for temperature, density, polyphony, key signature, pitch range, and other generation parameters.
+1. **Inference Server** (`midigpt-http`) — Starts a stateless FastAPI server listening for generation requests on port `3456` (binds `0.0.0.0` by default, so it can run on a different machine than REAPER, e.g. a GPU workstation on the same network).
+2. **REAPER Script** (`REAPER_midigpt_infill.py`) — Reads your REAPER session (MIDI, instruments, control values), sends a generation payload to the server, and writes the result back into your project. Talks to `http://127.0.0.1:3456` by default; run the **MIDI-GPT: Set server address** action to point it at a different IP/domain.
+3. **Dashboard** (`REAPER_midigpt_dashboard.py`) — A single ReaImGui window for the whole workflow: server address, SoundFont/track setup, global options, per-track controls (density, polyphony, key signature, pitch mask, remix, etc.), and running generation.
 
 The model sees your existing MIDI as context and generates new notes for the bars you select, producing results that fit musically with the surrounding material.
 
@@ -420,6 +422,7 @@ The model sees your existing MIDI as context and generates new notes for the bar
 ## Requirements
 
 - **REAPER** 64-bit (v6 or later) — [Download REAPER](https://www.reaper.fm/download.php) (make sure to select the **64-bit** version for your OS)
+- **ReaImGui** — the REAPER extension the dashboard UI is built with. Install it via **Extensions > ReaPack > Browse packages**, search `ReaImGui`, install, then restart REAPER. (Don't have ReaPack? Get it first: [reapack.com](https://reapack.com/).) The installer checks for this and warns you if it's missing.
 - **Python** 3.10 – 3.12 (3.12 recommended) — [Download Python](https://www.python.org/downloads/)
 - **Git** (required for installer package check)
 - **OS:** macOS, Linux, or Windows
@@ -427,6 +430,22 @@ The model sees your existing MIDI as context and generates new notes for the bar
 ---
 
 ## Installation
+
+### One-Line Install (macOS / Linux)
+
+Paste this into a terminal — it installs everything and offers to start the server immediately:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Metacreation-Lab/midigpt-REAPER/main/bootstrap.sh | bash
+```
+
+**Requirements:** Python 3.10, 3.11, or 3.12 and `git`. If Python is missing, the installer will tell you exactly how to get it for your OS (Homebrew on macOS, `apt` on Ubuntu/Debian, or python.org for anything else). After installing, re-run the same command.
+
+**To update later:** `cd ~/midigpt-REAPER && ./update.sh`
+
+**To uninstall:** `cd ~/midigpt-REAPER && ./uninstall.sh`
+
+---
 
 ### Quick Install (Release Package)
 
@@ -443,7 +462,7 @@ The installer handles everything automatically:
 1. **System dependencies** — Detects `python` and `git`.
 2. **Python virtual environment** — Creates `.venv/` with PyTorch.
 3. **MIDI-GPT backend** — Installs the sibling `MIDI-GPT` library in editable mode.
-4. **REAPER symlinks** — Links Scripts and Effects into your REAPER config folder.
+4. **REAPER symlinks** — Links the plugin's Scripts into your REAPER config folder, and checks whether the ReaImGui extension (required by the dashboard UI) is already installed, printing instructions if not.
 5. **REAPER configuration** — Edits `reaper.ini` to enable ReaScript and set the Python library path (quit REAPER first).
 6. **Desktop shortcut** — Places a "Start MIDI-GPT Server" launcher on your Desktop.
 
@@ -473,21 +492,23 @@ If you cloned this repo and want to link a local `MIDI-GPT` backend repository:
 
 ## REAPER Setup
 
-1. **Load the ReaScript Action:**
+1. **Install ReaImGui (required, one-time):** **Extensions > ReaPack > Browse packages**, search `ReaImGui`, install, then restart REAPER. The dashboard won't open without it. (Don't have ReaPack? Get it first: [reapack.com](https://reapack.com/).)
+
+2. **Load the ReaScript Actions:**
    * Open the Action List: **Actions > Show Action List** (or press `?`).
    * Click **New action**, then select **Load ReaScript...**.
    * Browse to: `~/Library/Application Support/REAPER/Scripts/MIDI-GPT/` (or `%APPDATA%\REAPER\Scripts\MIDI-GPT\` on Windows).
-   * Select **`REAPER_midigpt_infill.py`** and click Open.
+   * Select **`REAPER_midigpt_dashboard.py`** — this is the primary UI, load it first.
+   * Also load `REAPER_midigpt_infill.py`, `REAPER_midigpt_set_server.py`, `REAPER_midigpt_setup_tracks.py`, `REAPER_midigpt_set_soundfont_template.py`, and `REAPER_midigpt_apply_soundfont_template.py` — the dashboard calls into these directly, but loading them separately also gives you keyboard-shortcut access to each one on its own.
 
-2. **Add Global Options JSFX (required):**
-   * Open the Monitoring Effects window (**View > Monitoring Effects**).
-   * Click **Add** and search for **`JS: MIDI-GPT Global Options`**.
-   * Add it to the Monitoring FX chain. This must be present for any generation to work.
+3. **Open the dashboard:** run **MIDI-GPT: Dashboard**. It's a single window covering server address, global options, and per-track controls (density, polyphony, duration, key signature, pitch mask, remix, etc.) — see [Controls Reference](#controls-reference) for what each control does. Values are saved per-project, so you only need to set them once per session.
 
-3. **Add Track Options JSFX (optional, per track):**
-   * On tracks where you want per-track control over density, polyphony, and duration, add the track JSFX.
-   * Search for **`JS: MIDI-GPT Track Options (Yellow-Ghost)`** and add it to the track's FX chain.
-   * Tracks without this JSFX use default values inferred from existing content — see [Tips and Common Gotchas](#tips-and-common-gotchas) for when this matters.
+4. **Set up tracks (optional, saves manual work):**
+   * The dashboard's **Setup Tracks** button (or the standalone **MIDI-GPT: Setup tracks** action, `REAPER_midigpt_setup_tracks.py`) auto-detects each track's GM instrument from its MIDI content and adds a Sforzando instance to any track that doesn't have one yet.
+   * Instrument detection reads each track's actual MIDI content (channel 10 / Program Change events), not the track name, since imported files usually give every track the same name. Tracks it can't resolve that way are prompted for individually — a native dropdown list of all 128 GM instruments on macOS, or a keyword-entry dialog (piano/bass/drums/etc.) elsewhere. Resolved tracks are renamed to the matching name from [INSTRUMENTS.md](INSTRUMENTS.md) (e.g. `acoustic_grand_piano`, `drums`) so they're readable at a glance.
+   * **SoundFont setup (one-time):** the first run adds an empty Sforzando to every track. Manually import your `.sf2` (e.g. Arachno, see [VST.md](VST.md)) into *one* track's Sforzando, then run **MIDI-GPT: Use as soundfont template** on that track. From then on, `Setup tracks` clones that already-loaded instance onto any track that doesn't have an instrument yet — no re-importing the SoundFont per track. To replace tracks that already got an empty Sforzando before the template existed, select them and run **MIDI-GPT: Apply soundfont template to selected tracks**.
+   * **Auto-selecting the instrument program (one-time per instrument):** by default you still pick the program inside Sforzando manually (the console output tells you which one, e.g. `electric_bass_finger`, per track). To make `Setup tracks` select it for you, save it as a REAPER FX preset once: with that program showing in Sforzando, open the FX window's **Presets** dropdown → **Save preset...**, and name it `MIDI-GPT: ` + the canonical name (e.g. `MIDI-GPT: electric_bass_finger`) — the `MIDI-GPT: ` prefix keeps these separate from any of your own presets so nothing clashes. Once a preset exists for an instrument, every future track resolved to it gets that program selected automatically — this only needs doing once per instrument you actually use, ever.
+   * Safe to re-run `Setup tracks`: a track's instrument/preset is only ever touched if this script added the instrument itself, and only until its preset selection is confirmed once — after that (or on any instrument you added/changed by hand), re-running leaves it alone. A preset that didn't take effect on one run (still loading) is retried automatically on the next.
 
 ---
 
@@ -498,12 +519,13 @@ If you cloned this repo and want to link a local `MIDI-GPT` backend repository:
 Double-click the **`Start MIDI-GPT Server`** shortcut on your Desktop, or run from the repo:
 
 ```bash
-./start_midigpt_server.sh                        # Yellow model (default)
-./start_midigpt_server.sh --pretrained ghost     # Ghost model
-./start_midigpt_server.sh --ckpt /path/to/model  # Local checkpoint
+./start_midigpt_server.sh                                          # yellow_medium (default)
+./start_midigpt_server.sh --pretrained prism_medium                # Prism model
+./start_midigpt_server.sh --pretrained expressive_medium           # Expressive model
+./start_midigpt_server.sh --ckpt /path/to/model.safetensors        # Local checkpoint
 ```
 
-The model is fixed for the lifetime of the server process. To switch models, stop the server and restart it with a different flag. The REAPER script auto-detects the running model via the server's `/info` endpoint and loads the correct Track Options JSFX automatically.
+The model is fixed for the lifetime of the server process. To switch models, stop the server and restart it with a different flag. The dashboard auto-detects the running model via the server's `/info` endpoint and adjusts which per-track controls it shows accordingly.
 
 ### 2. Set Up Your Session
 
@@ -511,13 +533,13 @@ The model is fixed for the lifetime of the server process. To switch models, sto
 
 **Add MIDI context** to your tracks. The model uses surrounding notes as musical context when generating. Tracks with more coherent existing content produce more coherent output.
 
-**Add Track Options JSFX** to any track where you want explicit control over density, polyphony, and duration. This is optional for tracks with existing content, but important for empty tracks — see [Generating into Empty Tracks](#generating-into-empty-tracks).
+**Open the dashboard** (**MIDI-GPT: Dashboard**) and set per-track controls for any track where you want explicit control over density, polyphony, and duration. This is optional for tracks with existing content, but important for empty tracks — see [Generating into Empty Tracks](#generating-into-empty-tracks).
 
 ### 3. Select Context and Target Bars
 
 **Set the loop region (context window):**
 - Enable the REAPER loop and position it over the bars you want the model to use as musical context.
-- The loop region should match the model's context size (`model_dim`, shown in the Global Options JSFX — 4 bars for Yellow by default).
+- The loop region should match the model's context size (`model_dim`, shown in the dashboard's Global Options panel — 4 bars for Yellow by default).
 - Without a loop region, the model uses the entire project as context, which is slower but still works.
 
 **Set the time selection (generation target):**
@@ -527,46 +549,54 @@ The model is fixed for the lifetime of the server process. To switch models, sto
 
 ### 4. Run Generation
 
-Open the Action List (`?`) and run **`Script: REAPER_midigpt_infill.py`**.
+Click **Run Infill** in the dashboard, or open the Action List (`?`) and run **`Script: REAPER_midigpt_infill.py`** directly.
 
-The script reads your MIDI items and JSFX slider values, sends a generation request to the server, and writes the result back. Generated MIDI **replaces** whatever was in the target bars. You can run the script again to regenerate with different settings or a different random seed.
+The script reads your MIDI items and the dashboard's saved control values, sends a generation request to the server, and writes the result back. Generated MIDI **replaces** whatever was in the target bars. Run it again to regenerate with different settings or a different random seed.
 
 ### Generating into Empty Tracks
 
-When generating into bars that contain no existing MIDI, the model has no content to infer controls from. Without explicit Track Options JSFX settings, it tends toward silence or sparse output.
+When generating into bars that contain no existing MIDI, the model has no content to infer controls from. Without explicit per-track settings, it tends toward silence or sparse output.
 
 To get useful results on empty tracks:
 
 1. Create the track, name it with an instrument keyword, and create an empty MIDI item covering the target bars.
-2. Add **Track Options JSFX** to the track and set controls appropriate to the instrument:
+2. In the dashboard's Track Controls for that track, set controls appropriate to the instrument. **Density only affects drum tracks; Polyphony and Note Duration only affect melodic tracks** — the dashboard shows only the controls relevant to the track it detects, so which columns apply depends on what kind of track you're setting up:
 
-| Instrument type | Polyphony (min/max) | Duration | Density |
-|-----------------|---------------------|----------|---------|
-| Monophonic (flute, bass, lead) | 1 / 1 | Short–medium | Low |
-| Chordal (piano, pads, guitar) | 3 / 6 | Medium–long | Medium |
-| Arpeggio | 1 / 2 | Short | Medium–high |
-| Drums | 1 / 4 | Short | High |
+| Instrument type | Polyphony (min/max) | Duration |
+|-----------------|---------------------|----------|
+| Monophonic (flute, bass, lead) | 1 / 1 | Short–medium |
+| Chordal (piano, pads, guitar) | 3 / 6 | Medium–long |
+| Arpeggio | 1 / 2 | Short |
 
-3. Run generation. Adjust sliders and regenerate until you get the character you want.
+| Drum density | Setting |
+|--------------|---------|
+| Sparse (kick/snare only) | Low |
+| Standard groove | Medium |
+| Busy/fills | High |
+
+3. Run generation. Adjust the controls and regenerate until you get the character you want.
 
 ### Tips and Common Gotchas
 
-- **Loop size and model_dim**: The loop region should be exactly `model_dim` bars (check the Global Options JSFX). A mismatched loop forces the model to process more context than necessary, which slows generation.
+- **Loop size and model_dim**: The loop region should be exactly `model_dim` bars (check the dashboard's Global Options panel). A mismatched loop forces the model to process more context than necessary, which slows generation.
 - **Bars per step can exceed model_dim**: You can generate more bars than `model_dim` in one run. The model steps through the target bars sequentially at `model_dim`-sized increments.
-- **No Track FX on empty bars**: Without Track FX, controls are inferred from existing content. On empty bars this biases strongly toward silence. Always add Track FX when generating into empty tracks and set polyphony, duration, and density explicitly.
+- **No per-track controls on empty bars**: Without dashboard settings for a track, controls are inferred from existing content. On empty bars this biases strongly toward silence. Always set per-track controls when generating into empty tracks — polyphony/duration for melodic tracks, density for drum tracks.
+- **Density vs. Polyphony/Duration**: Density only ever affects drum tracks; Polyphony, Note Duration, Key Signature, Pitch Range, and Pitch Class Set only ever affect melodic tracks. Setting one on the wrong track type is a silent no-op — the dashboard hides whichever half doesn't apply once it detects the track's instrument.
 - **Instrument fallback**: Tracks with names the plugin doesn't recognize default to piano (instrument 0). If a track is generating piano-like output unexpectedly, check the track name against [INSTRUMENTS.md](INSTRUMENTS.md).
 
 ---
 
 ## Controls Reference
 
-### Global Options (Monitor FX or Master Track)
+All controls below live in the **MIDI-GPT: Dashboard** window (`REAPER_midigpt_dashboard.py`), saved per-project — you only need to set them once per session, not per generation run.
+
+### Global Options
 
 | Parameter | Slider Range | Description |
 |-----------|--------------|-------------|
 | **Temperature** | 0.1 to 3.0 | Controls generation randomness. Lower = more conservative. |
 | **Context Size** | 2 to 16 | The model's context window size in bars (default: 4). |
-| **Bars Per Step** | 1 to 16 | Number of bars generated per inference step. |
+| **Bars Per Step** | 1 to Context Size | Number of bars generated per inference step. |
 | **Tracks Per Step** | 1 to 16 | Number of tracks processed per step. |
 | **Polyphony Hard Limit** | 0 to 32 | Global limit on simultaneous note onsets (0 = disabled). |
 | **Density Hard Limit** | 0 to 64 | Global limit on note onsets per bar (0 = disabled). |
@@ -577,22 +607,38 @@ To get useful results on empty tracks:
 | **Anti-nucleus mask_p** | 0.0 to 0.95 | Chops most-likely tokens to force novelty (0.0 = off). |
 | **Anti-nucleus mask_k** | 0 to 100 | Chops top-k tokens after top_* filtering (0 = off). |
 | **Random Seed** | -1 to 999999 | Fixed seed for reproducibility (-1 = random). |
+| **Batch Candidates** | 1 to 16 | Generate multiple candidates per run and pick the best one in the dashboard. Disables token streaming above 1. |
 | **Checks** | None, Novelty, Silence, Both | Enables validation filters. |
 | **Shuffle Steps** | No, Yes | Shuffles order of generation steps. |
 
-### Track Options (Per-Track FX)
+### Track Controls (Per-Track)
 
-#### Yellow-Ghost Model Parameters
-* **Density** (0-10): Note density level.
-* **Min Polyphony** (0-10): Min simultaneous notes.
-* **Max Polyphony** (0-10): Max simultaneous notes.
-* **Min Note Duration** (0-6): Min note duration quantized.
-* **Max Note Duration** (0-6): Max note duration quantized.
+Density only ever affects **drum** tracks. Polyphony, Note Duration, Key Signature, Pitch Range, and Pitch Class Set only ever affect **melodic** tracks — setting one on the wrong track type is a silent no-op server-side. The dashboard detects each track's instrument and shows only the half that applies; if it can't tell, it shows both and says so.
+
+#### Yellow Model Parameters
+* **Density** (0-10, drums only): Note density level.
+* **Min / Max Polyphony** (0-10, melodic only): Simultaneous note bounds.
+* **Min / Max Note Duration** (0-6, melodic only): Note duration bounds, quantized.
+* **Autoregressive**: Freely generate full track bar-by-bar.
+* **Ignore**: Ignores this track for generation (treats as context).
+
+#### Prism Model Parameters
+* **Key Signature** (0-25, melodic only): Constrain output to a key (0 = any).
+* **Pitch Range** (0-128, melodic only): Max pitch span in semitones (0 = any).
+* **Silence Proportion** (0-10, both track types): Target proportion of silence (0 = any).
+* **Min / Max Note Duration** (0-6, melodic only): Quantized note duration bounds.
+* **Density** (0-10, drums only): Per-bar note density (applied to each generated bar).
+* **Min / Max Polyphony** (0-10, melodic only): Per-bar simultaneous note bounds.
+* **Pitch Class Set** (0-13, melodic only): Number of distinct pitch classes per bar (0 = any).
 * **Autoregressive**: Freely generate full track bar-by-bar.
 * **Ignore**: Ignores this track for generation (treats as context).
 
 #### Expressive Model Parameters
-* Adds **Key Signature**, **Pitch Range**, **Silence Proportion**, **Pitch Class Set**, and **Nomml** controllers.
+* All Prism parameters, plus **NOMML** (0-13, both track types): Quantization grid depth controlling microtiming expressivity (0 = any, 13 = fully expressive).
+
+#### Pitch Mask & Remix (all models, if the loaded checkpoint supports them)
+* **Pitch Mask**: Off, constrain to a musical scale (root + preset), or an explicit set of allowed pitch classes — optionally reweighted toward a register (uniform range or a normal distribution around a mean pitch).
+* **Remix**: Regenerates a track's existing bars as a variation of what's already there (amount 0-1, pitch-only or pitch+duration) instead of generating fresh content.
 
 ---
 
@@ -930,8 +976,8 @@ This ensures REAPER detects newly installed VST instruments.
 2. Add **Sforzando** as an FX instrument
 3. Inside Sforzando:
 
-    * Click on `Intrument → import` then select the **Arachno `.sf2` file**
-    * Select an instrument by clicking on `Intrument → converted → sf2 → ...`
+    * Click on `Instrument → import` then select the **Arachno `.sf2` file**
+    * Select an instrument by clicking on `Instrument → converted → sf2 → ...`
 
 * Each program number corresponds to a GM instrument
 * This mapping is required for correct playback of generated MIDI
