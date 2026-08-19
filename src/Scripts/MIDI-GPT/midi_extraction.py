@@ -151,19 +151,20 @@ INST_TO_MATCHING_STRINGS = {
 }
 
 
-def get_instrument_from_track_name(track_name: str) -> int:
+def get_instrument_from_track_name(track_name: str) -> Optional[int]:
     """
-    Determine instrument number from track name
-    Returns the first matching instrument, or 0 (piano) as default
+    Determine instrument number from track name.
+    Returns the first matching instrument, or None if no keyword matches --
+    callers fall back to MIDI-content detection, then finally to piano.
     """
     track_name_lower = track_name.lower()
-    
+
     for inst_num, patterns in INST_TO_MATCHING_STRINGS.items():
         for pattern in patterns:
             if pattern in track_name_lower:
                 return inst_num
-    
-    return 0  # Default to piano
+
+    return None
 
 
 class TimeSelection:
@@ -530,7 +531,15 @@ class REAPERMIDIExtractor:
                 self.tempo_map.add_time_signature(timepos, timesig_num, timesig_denom)
     
     def _detect_instrument(self, track, track_name: str) -> int:
-        """Detect instrument number. MIDI channel 9 notes mean drums (GM channel 10)."""
+        """Detect instrument number. The track name is ground truth for
+        instrument identity (Setup Tracks' MIDI-content detection only
+        exists to auto-assign that name once); MIDI content (channel 9 =
+        GM channel 10 = drums) is only a fallback for a track that hasn't
+        been named/resolved yet, and piano is the final default."""
+        name_match = get_instrument_from_track_name(track_name)
+        if name_match is not None:
+            return name_match
+
         num_items = RPR_CountTrackMediaItems(track)
         for j in range(num_items):
             item = RPR_GetTrackMediaItem(track, j)
@@ -542,7 +551,7 @@ class REAPERMIDIExtractor:
                 note_info = RPR_MIDI_GetNote(take, n, 0, 0, 0, 0, 0, 0, 0)
                 if note_info[0] and note_info[7] == 9:
                     return 128
-        return get_instrument_from_track_name(track_name)
+        return 0  # Default to piano
 
     def _get_midi_tracks_with_info(self) -> List[TrackInfo]:
         """Get list of tracks that have at least one MIDI item (even if empty)."""
@@ -570,8 +579,9 @@ class REAPERMIDIExtractor:
                 retval, track_obj, flags_out = RPR_GetTrackState(track, 0)
                 track_name = retval if retval else f"Track {i+1}"
 
-                # Detect instrument: MIDI channel 9 (GM drums) takes priority
-                # over name-based heuristics, which are unreliable.
+                # Detect instrument: track name is ground truth, falling
+                # back to MIDI content (channel 9 = GM drums) only when the
+                # name doesn't match a known instrument.
                 instrument = self._detect_instrument(track, track_name)
 
                 track_info = TrackInfo(

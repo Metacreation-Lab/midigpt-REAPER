@@ -666,13 +666,17 @@ This generates a ZIP file named `MIDI-GPT-for-REAPER-[DATE].zip` in the reposito
 
 # Instrument Names
 
-MIDI-GPT uses General MIDI instrument names to identify tracks. The instrument is determined by the MIDI program number set on each track in REAPER.
+MIDI-GPT uses General MIDI instrument names to identify tracks. **The track name is ground truth** — `REAPER_midigpt_infill.py` matches your track's name against the keyword list below (case-insensitive, substring match) to resolve it to one of the canonical instrument names shown in the table.
 
-Set the correct MIDI program on your track so the model knows what instrument it's generating for. The mapping below shows **MIDI Program Number** -> **Internal Name**.
+A track's MIDI content (channel 10 for drums, or an embedded Program Change event) is only used as a *fallback*, for a track whose name doesn't match any keyword — and it's what the dashboard's **Setup Tracks** action uses to auto-assign a name in the first place. Once a track has a resolved name, that name is what determines its instrument for generation, not whatever MIDI content happens to be on it. A track with no name match and no detectable MIDI content defaults to piano.
+
+**To set a track's instrument:** rename it with a recognizable keyword (e.g. `"my piano"`, `"PIANO chords"`, `"bass"` all resolve correctly — matching is case-insensitive and just needs the keyword somewhere in the name), or run **MIDI-GPT: Setup tracks** to have it auto-detected and renamed for you from existing MIDI content.
+
+The mapping below shows **MIDI Program Number** -> **Internal Name** — this is the canonical name space your track names get resolved into, and what a soundfont program in Sforzando needs to match for [VST.md](VST.md)'s auto-preset-selection to work.
 
 ## Drums
 
-Drum tracks are detected automatically when the track's MIDI channel is set to channel 10, or the instrument number is 128 in REAPER's track info.
+A track named `drums` (or containing the word `drum`) resolves to drums. If unresolved by name, a track whose MIDI content is on channel 10 (or already has instrument number 128 in REAPER's track info) also resolves to drums.
 
 | Program | Internal Name |
 |---------|--------------|
@@ -890,8 +894,8 @@ Drum tracks are detected automatically when the track's MIDI channel is set to c
 
 - The model was trained on General MIDI data, so it performs best with standard GM instruments.
 - **Piano, guitar, bass, strings, and drums** are the most commonly represented in the training data and tend to produce the best results.
-- If you're using a synth or non-GM instrument, pick the closest GM program number for best generation quality.
-- You don't need to name your tracks — the MIDI program number is what matters. Track names are for your own reference.
+- If you're using a synth or non-GM instrument, pick the closest GM instrument name for best generation quality.
+- **Name your tracks** — the track name is what determines the instrument, not any MIDI content on it. A generic name like `"Track 1"` with no keyword match falls back to MIDI-content detection and finally defaults to piano, so an unresolved name can silently generate the wrong instrument's content. Run **MIDI-GPT: Setup tracks** to auto-detect and rename tracks from their MIDI content instead of doing it by hand.
 
 
 ---
