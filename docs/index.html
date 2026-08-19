@@ -409,11 +409,12 @@ AI-powered multi-track MIDI generation plugin for [REAPER](https://www.reaper.fm
 
 ## How It Works
 
-MIDI-GPT for REAPER has three components:
+MIDI-GPT for REAPER has two parts:
 
 1. **Inference Server** (`midigpt-http`) — Starts a stateless FastAPI server listening for generation requests on port `3456` (binds `0.0.0.0` by default, so it can run on a different machine than REAPER, e.g. a GPU workstation on the same network).
-2. **REAPER Script** (`REAPER_midigpt_infill.py`) — Reads your REAPER session (MIDI, instruments, control values), sends a generation payload to the server, and writes the result back into your project. Talks to `http://127.0.0.1:3456` by default; run the **MIDI-GPT: Set server address** action to point it at a different IP/domain.
-3. **Dashboard** (`REAPER_midigpt_dashboard.py`) — A single ReaImGui window for the whole workflow: server address, SoundFont/track setup, global options, per-track controls (density, polyphony, key signature, pitch mask, remix, etc.), and running generation.
+2. **Dashboard** (`REAPER_midigpt_dashboard.py`) — The one window you interact with in REAPER: server address, track/SoundFont setup, global options, per-track controls (density, polyphony, key signature, pitch mask, remix, etc.), and a **Run Infill** button that reads your session, sends a generation payload to the server, and writes the result back into your project.
+
+The dashboard's buttons are thin wrappers around a handful of underlying scripts (`REAPER_midigpt_infill.py` does the actual generation call, `REAPER_midigpt_setup_tracks.py` does track setup, etc.) — you never need to run those directly, but you can load them as their own ReaScript actions too if you want keyboard-shortcut access to one of them without opening the dashboard. See [REAPER Setup](#reaper-setup).
 
 The model sees your existing MIDI as context and generates new notes for the bars you select, producing results that fit musically with the surrounding material.
 
@@ -494,21 +495,29 @@ If you cloned this repo and want to link a local `MIDI-GPT` backend repository:
 
 1. **Install ReaImGui (required, one-time):** **Extensions > ReaPack > Browse packages**, search `ReaImGui`, install, then restart REAPER. The dashboard won't open without it. (Don't have ReaPack? Get it first: [reapack.com](https://reapack.com/).)
 
-2. **Load the ReaScript Actions:**
+2. **Load the dashboard as a ReaScript action:**
    * Open the Action List: **Actions > Show Action List** (or press `?`).
    * Click **New action**, then select **Load ReaScript...**.
    * Browse to: `~/Library/Application Support/REAPER/Scripts/MIDI-GPT/` (or `%APPDATA%\REAPER\Scripts\MIDI-GPT\` on Windows).
-   * Select **`REAPER_midigpt_dashboard.py`** — this is the primary UI, load it first.
-   * Also load `REAPER_midigpt_infill.py`, `REAPER_midigpt_set_server.py`, `REAPER_midigpt_setup_tracks.py`, `REAPER_midigpt_set_soundfont_template.py`, and `REAPER_midigpt_apply_soundfont_template.py` — the dashboard calls into these directly, but loading them separately also gives you keyboard-shortcut access to each one on its own.
+   * Select **`REAPER_midigpt_dashboard.py`** and click Open. This is the only action you need — everything below is a button inside the window it opens.
+   * *(Optional)* The dashboard's buttons are wrappers around `REAPER_midigpt_infill.py`, `REAPER_midigpt_set_server.py`, `REAPER_midigpt_setup_tracks.py`, `REAPER_midigpt_set_soundfont_template.py`, and `REAPER_midigpt_apply_soundfont_template.py`. Load any of those the same way if you want a keyboard shortcut for that one action specifically, without opening the dashboard — REAPER lists each as `Script: <filename>.py` in the Action List. Nothing about the dashboard requires this; it's purely a convenience for people who'd rather bind a hotkey than click a button.
 
-3. **Open the dashboard:** run **MIDI-GPT: Dashboard**. It's a single window covering server address, global options, and per-track controls (density, polyphony, duration, key signature, pitch mask, remix, etc.) — see [Controls Reference](#controls-reference) for what each control does. Values are saved per-project, so you only need to set them once per session.
+3. **Open the dashboard:** run the action you just loaded. The window has, top to bottom:
+   * **Actions row** — the current server address and a **Change...** button next to it, a model picker (once the server responds), **Setup Tracks**, **Use Selected Track as SoundFont Template**, **Apply Template to Selected Tracks**, **Run Infill**, and **Reset Global Options && Track Controls**.
+   * **Global Options** — generation-wide settings (temperature, context size, sampling, etc.) — see [Controls Reference](#controls-reference).
+   * **Track Controls** — one collapsible section per track (density, polyphony, duration, key signature, pitch mask, remix, etc.).
+   * **Console** — live log output for whatever you just ran (generation progress, errors, the outgoing request for debugging).
 
-4. **Set up tracks (optional, saves manual work):**
-   * The dashboard's **Setup Tracks** button (or the standalone **MIDI-GPT: Setup tracks** action, `REAPER_midigpt_setup_tracks.py`) auto-detects each track's GM instrument from its MIDI content and adds a Sforzando instance to any track that doesn't have one yet.
-   * Instrument detection reads each track's actual MIDI content (channel 10 / Program Change events), not the track name, since imported files usually give every track the same name. Tracks it can't resolve that way are prompted for individually — a native dropdown list of all 128 GM instruments on macOS, or a keyword-entry dialog (piano/bass/drums/etc.) elsewhere. Resolved tracks are renamed to the matching name from [INSTRUMENTS.md](INSTRUMENTS.md) (e.g. `acoustic_grand_piano`, `drums`) so they're readable at a glance.
-   * **SoundFont setup (one-time):** the first run adds an empty Sforzando to every track. Manually import your `.sf2` (e.g. Arachno, see [VST.md](VST.md)) into *one* track's Sforzando, then run **MIDI-GPT: Use as soundfont template** on that track. From then on, `Setup tracks` clones that already-loaded instance onto any track that doesn't have an instrument yet — no re-importing the SoundFont per track. To replace tracks that already got an empty Sforzando before the template existed, select them and run **MIDI-GPT: Apply soundfont template to selected tracks**.
-   * **Auto-selecting the instrument program (one-time per instrument):** by default you still pick the program inside Sforzando manually (the console output tells you which one, e.g. `electric_bass_finger`, per track). To make `Setup tracks` select it for you, save it as a REAPER FX preset once: with that program showing in Sforzando, open the FX window's **Presets** dropdown → **Save preset...**, and name it `MIDI-GPT: ` + the canonical name (e.g. `MIDI-GPT: electric_bass_finger`) — the `MIDI-GPT: ` prefix keeps these separate from any of your own presets so nothing clashes. Once a preset exists for an instrument, every future track resolved to it gets that program selected automatically — this only needs doing once per instrument you actually use, ever.
-   * Safe to re-run `Setup tracks`: a track's instrument/preset is only ever touched if this script added the instrument itself, and only until its preset selection is confirmed once — after that (or on any instrument you added/changed by hand), re-running leaves it alone. A preset that didn't take effect on one run (still loading) is retried automatically on the next.
+   All of it is saved per-project, so you only need to set it once per session.
+
+4. **Point it at your server, if it's not local:** click **Change...** next to "Server:" in the dashboard and enter the address (e.g. `http://192.168.1.20:3456`). Defaults to `http://127.0.0.1:3456`.
+
+5. **Set up tracks (optional, saves manual work):**
+   * Click **Setup Tracks** in the dashboard. It auto-detects each track's GM instrument from its MIDI content and adds a Sforzando instance to any track that doesn't have one yet.
+   * This is specifically for *assigning* a name in the first place, so it reads each track's actual MIDI content (channel 10 / Program Change events) rather than the current track name, since imported files usually give every track the same name to start with. Tracks it can't resolve that way are prompted for individually — a native dropdown list of all 128 GM instruments on macOS, or a keyword-entry dialog (piano/bass/drums/etc.) elsewhere. Resolved tracks are renamed to the matching name from [INSTRUMENTS.md](INSTRUMENTS.md) (e.g. `acoustic_grand_piano`, `drums`) so they're readable at a glance — from then on, generation uses that name as ground truth (see [Set Up Your Session](#2-set-up-your-session)), not the track's MIDI content.
+   * **SoundFont setup (one-time):** the first run adds an empty Sforzando to every track. Manually import your `.sf2` (e.g. Arachno, see [VST.md](VST.md)) into *one* track's Sforzando, select that track, then click **Use Selected Track as SoundFont Template** in the dashboard. From then on, **Setup Tracks** clones that already-loaded instance onto any track that doesn't have an instrument yet — no re-importing the SoundFont per track. To replace tracks that already got an empty Sforzando before the template existed, select them and click **Apply Template to Selected Tracks**.
+   * **Auto-selecting the instrument program (one-time per instrument):** by default you still pick the program inside Sforzando manually (the dashboard's Console tells you which one, e.g. `electric_bass_finger`, per track). To make **Setup Tracks** select it for you, save it as a REAPER FX preset once: with that program showing in Sforzando, open the FX window's **Presets** dropdown → **Save preset...**, and name it `MIDI-GPT: ` + the canonical name (e.g. `MIDI-GPT: electric_bass_finger`) — the `MIDI-GPT: ` prefix keeps these separate from any of your own presets so nothing clashes. Once a preset exists for an instrument, every future track resolved to it gets that program selected automatically — this only needs doing once per instrument you actually use, ever.
+   * Safe to re-run **Setup Tracks**: a track's instrument/preset is only ever touched if it added the instrument itself, and only until its preset selection is confirmed once — after that (or on any instrument you added/changed by hand), re-running leaves it alone. A preset that didn't take effect on one run (still loading) is retried automatically on the next.
 
 ---
 
@@ -529,11 +538,11 @@ The model is fixed for the lifetime of the server process. To switch models, sto
 
 ### 2. Set Up Your Session
 
-**Name your tracks** so the plugin can identify instruments. Track names are matched case-insensitively by keyword — a track named `"my piano"` or `"PIANO chords"` both resolve to piano. Unrecognized names default to piano. See [INSTRUMENTS.md](INSTRUMENTS.md) for the full keyword list.
+**Name your tracks** so the plugin can identify instruments — this is the ground truth generation uses, not any MIDI content on the track. Names are matched case-insensitively by keyword — a track named `"my piano"` or `"PIANO chords"` both resolve to piano. A name that matches no keyword falls back to detecting from the track's MIDI content (channel 10 for drums), and finally defaults to piano if that fails too. See [INSTRUMENTS.md](INSTRUMENTS.md) for the full keyword list, or just click **Setup Tracks** in the dashboard to have it resolved and renamed for you.
 
 **Add MIDI context** to your tracks. The model uses surrounding notes as musical context when generating. Tracks with more coherent existing content produce more coherent output.
 
-**Open the dashboard** (**MIDI-GPT: Dashboard**) and set per-track controls for any track where you want explicit control over density, polyphony, and duration. This is optional for tracks with existing content, but important for empty tracks — see [Generating into Empty Tracks](#generating-into-empty-tracks).
+**Open the dashboard** and set per-track controls for any track where you want explicit control over density, polyphony, and duration. This is optional for tracks with existing content, but important for empty tracks — see [Generating into Empty Tracks](#generating-into-empty-tracks).
 
 ### 3. Select Context and Target Bars
 
@@ -549,9 +558,9 @@ The model is fixed for the lifetime of the server process. To switch models, sto
 
 ### 4. Run Generation
 
-Click **Run Infill** in the dashboard, or open the Action List (`?`) and run **`Script: REAPER_midigpt_infill.py`** directly.
+Click **Run Infill** in the dashboard.
 
-The script reads your MIDI items and the dashboard's saved control values, sends a generation request to the server, and writes the result back. Generated MIDI **replaces** whatever was in the target bars. Run it again to regenerate with different settings or a different random seed.
+It reads your MIDI items and the dashboard's saved control values, sends a generation request to the server, and writes the result back — progress and the outgoing request appear in the dashboard's Console. Generated MIDI **replaces** whatever was in the target bars. Run it again to regenerate with different settings or a different random seed.
 
 ### Generating into Empty Tracks
 
@@ -582,13 +591,13 @@ To get useful results on empty tracks:
 - **Bars per step can exceed model_dim**: You can generate more bars than `model_dim` in one run. The model steps through the target bars sequentially at `model_dim`-sized increments.
 - **No per-track controls on empty bars**: Without dashboard settings for a track, controls are inferred from existing content. On empty bars this biases strongly toward silence. Always set per-track controls when generating into empty tracks — polyphony/duration for melodic tracks, density for drum tracks.
 - **Density vs. Polyphony/Duration**: Density only ever affects drum tracks; Polyphony, Note Duration, Key Signature, Pitch Range, and Pitch Class Set only ever affect melodic tracks. Setting one on the wrong track type is a silent no-op — the dashboard hides whichever half doesn't apply once it detects the track's instrument.
-- **Instrument fallback**: Tracks with names the plugin doesn't recognize default to piano (instrument 0). If a track is generating piano-like output unexpectedly, check the track name against [INSTRUMENTS.md](INSTRUMENTS.md).
+- **Instrument fallback**: Tracks with names the plugin doesn't recognize fall back to MIDI-content detection, then finally default to piano (instrument 0) if that fails too. If a track is generating piano-like output unexpectedly, check the track name against [INSTRUMENTS.md](INSTRUMENTS.md) — a matching name is more reliable than the content fallback.
 
 ---
 
 ## Controls Reference
 
-All controls below live in the **MIDI-GPT: Dashboard** window (`REAPER_midigpt_dashboard.py`), saved per-project — you only need to set them once per session, not per generation run.
+All controls below live in the dashboard window (`REAPER_midigpt_dashboard.py`), saved per-project — you only need to set them once per session, not per generation run.
 
 ### Global Options
 
