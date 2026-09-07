@@ -406,8 +406,16 @@ def reset_all_settings():
     save_track_params(track_params)
     print("Reset Global Options and Track Controls to defaults. Track instrument/SoundFont setup was left untouched.\n")
 
+def set_server_and_refresh():
+    """Runs the 'Set server' dialog, then immediately re-detects the model
+    type/capabilities/list against whatever server the user just pointed at
+    -- otherwise the model picker keeps showing the old server's data until
+    the user notices and clicks 'Refresh##model' themselves."""
+    set_server.run_set_server()
+    refresh_model_type()
+
 ACTIONS = {
-    "set_server":              set_server.run_set_server,
+    "set_server":              set_server_and_refresh,
     "setup_tracks":            setup_tracks.run_setup_tracks,
     "set_soundfont_template":  set_soundfont_template.run_set_soundfont_template,
     "apply_soundfont_template": apply_soundfont_template.run_apply_soundfont_template,
@@ -966,7 +974,18 @@ def loop():
         if done:
             finished_ctx = active_generation["ctx"]
             active_generation = None
-            result = infill.finish_generation(handle, finished_ctx)
+            try:
+                result = infill.finish_generation(handle, finished_ctx)
+            except Exception:
+                # A bad server response shape or a stale REAPER object
+                # reference here must not kill the defer loop -- that would
+                # freeze the whole dashboard until it's manually reopened,
+                # for what's usually just one bad generation. Log and move
+                # on; active_generation is already cleared above so the
+                # next "Run Infill" isn't blocked.
+                import traceback
+                print(traceback.format_exc() + "\n")
+                result = None
             if result is not None:
                 last_generation_result = result
                 if result.get("candidates") is not None:
@@ -1081,17 +1100,33 @@ def loop():
     if need_save_track:
         save_track_params(track_params)
 
-    if clicked == "cancel_generation":
-        if active_generation is not None:
-            infill.cancel_generation(active_generation["handle"])
-            print("Cancellation requested -- waiting for the server to stop...\n")
-    elif clicked and clicked.startswith("batch_select_"):
-        switch_batch_candidate(int(clicked[len("batch_select_"):]))
-    elif clicked in ACTIONS:
-        log_lines.clear()
-        ACTIONS[clicked]()
+    try:
+        if clicked == "cancel_generation":
+            if active_generation is not None:
+                infill.cancel_generation(active_generation["handle"])
+                print("Cancellation requested -- waiting for the server to stop...\n")
+        elif clicked and clicked.startswith("batch_select_"):
+            switch_batch_candidate(int(clicked[len("batch_select_"):]))
+        elif clicked in ACTIONS:
+            log_lines.clear()
+            ACTIONS[clicked]()
+    except Exception:
+        # Same reasoning as the finish_generation() guard above -- an
+        # action button (setup tracks, apply soundfont template, etc.)
+        # throwing here must not kill the defer loop.
+        import traceback
+        print(traceback.format_exc() + "\n")
 
     if is_open:
         RPR_defer("loop()")
+    elif active_generation is not None:
+        # The window was closed with a generation still in flight. Nothing
+        # else cancels it -- the background thread (REAPER_midigpt_infill.py)
+        # would otherwise keep running against the server for up to its own
+        # timeout with no cancel ever sent, and a server that only handles
+        # one generation at a time would leave the *next* dashboard session's
+        # first request stalled behind this orphaned one.
+        infill.cancel_generation(active_generation["handle"])
+        print("Dashboard closed with a generation in flight -- cancelling it.\n")
 
 RPR_defer("init()")

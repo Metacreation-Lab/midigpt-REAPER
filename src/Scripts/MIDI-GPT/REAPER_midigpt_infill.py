@@ -91,12 +91,22 @@ def get_available_models() -> dict:
     dashboard's Model dropdown stays hidden until this has succeeded once."""
     return http_get(f"{get_server_url()}/models")
 
+class HttpServerError(Exception):
+    """Raised by http_post() on a non-2xx response. str(e) always carries
+    the server's parsed "detail" (e.g. the specific validation reason for a
+    422), not just the generic HTTP reason phrase -- callers that only keep
+    str(e) around (e.g. GenerationHandle.error) still get the real reason."""
+    def __init__(self, code, detail):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"HTTP {code}: {detail}")
+
 def http_post(url, data_dict):
     import urllib.error
     data = json.dumps(data_dict).encode('utf-8')
     req = urllib.request.Request(
-        url, 
-        data=data, 
+        url,
+        data=data,
         headers={'Content-Type': 'application/json', 'User-Agent': 'MIDI-GPT-REAPER'}
     )
     try:
@@ -107,10 +117,10 @@ def http_post(url, data_dict):
             err_body = e.read().decode('utf-8')
             err_json = json.loads(err_body)
             detail = err_json.get("detail", err_body)
-            print(f"HTTP Server Error {e.code}: {detail}\n")
         except Exception:
-            print(f"HTTP Server Error {e.code}: {e.reason}\n")
-        raise
+            detail = e.reason
+        print(f"HTTP Server Error {e.code}: {detail}\n")
+        raise HttpServerError(e.code, detail) from e
 
 # ---------------------------------------------------------------------------
 # Async generation -- runs the (potentially slow, up to minutes) POST
@@ -884,16 +894,34 @@ def finish_generation(handle: GenerationHandle, ctx: dict):
         "candidates": None, "selected_index": None, "extraction": extraction,
     }
 
-_infill_poll_tick = None
+# request_id -> (handle, ctx) for every standalone "MIDI-GPT: Run infill"
+# invocation still in flight. Keyed rather than a single shared global/
+# closure -- with just one shared slot, triggering this action again before
+# a prior run finished would silently overwrite it, orphaning the first
+# handle/ctx (its result never gets polled, written back, or reported; it
+# just vanishes with no error). Keying by request_id lets any number of
+# concurrent standalone runs coexist safely.
+_infill_poll_handles = {}
+
+def _infill_poll_dispatch():
+    """Single stable RPR_defer target -- ticks every in-flight standalone
+    run each cycle and reschedules itself as long as any are still pending."""
+    for request_id, (handle, ctx) in list(_infill_poll_handles.items()):
+        with handle.lock:
+            done = handle.done
+        if done:
+            del _infill_poll_handles[request_id]
+            finish_generation(handle, ctx)
+    if _infill_poll_handles:
+        RPR_defer("_infill_poll_dispatch()")
 
 def run_midigpt_infill():
     """Standalone (Action List) entry point. Kicks off preparation +
     generation and keeps itself alive via RPR_defer to poll for completion
     -- like the dashboard's own loop, this never blocks REAPER's UI thread
     on the network call. Always returns None immediately; the actual result
-    is printed to the console once generation finishes."""
-    global _infill_poll_tick
-
+    is printed to the console once generation finishes. Safe to trigger
+    again before a prior run finishes -- see _infill_poll_handles above."""
     ctx = prepare_generation()
     if ctx is None:
         return None
@@ -906,16 +934,10 @@ def run_midigpt_infill():
           + (" (streaming)" if use_streaming else " (this may take a while)") + "...\n")
     handle = start_generation(ctx["server_url"], ctx["request_dict"], use_streaming)
 
-    def _poll():
-        with handle.lock:
-            done = handle.done
-        if not done:
-            RPR_defer("_infill_poll_tick()")
-            return
-        finish_generation(handle, ctx)
-
-    _infill_poll_tick = _poll
-    RPR_defer("_infill_poll_tick()")
+    was_idle = not _infill_poll_handles
+    _infill_poll_handles[handle.request_id] = (handle, ctx)
+    if was_idle:
+        RPR_defer("_infill_poll_dispatch()")
     return None
 
 if __name__ == "__main__":
