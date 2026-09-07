@@ -81,11 +81,25 @@ MAX_LOG_LINES = 500
 CONSOLE_ROW_HEIGHT = 200
 MIN_CONTENT_HEIGHT = 250
 
-# Width of one track's mixer-style channel strip in the Tracks tab -- wide
+# Width of one track's mixer-style channel strip in the Tracks panel -- wide
 # enough for "Pitch Class Set Size (0=Any)"-length labels to wrap at most
 # two lines, narrow enough that several tracks fit before the horizontal
 # scrollbar kicks in.
 TRACK_STRIP_WIDTH = 260.0
+
+# Preferred width of the Generate panel (left column) -- mostly vertical
+# sliders, so it doesn't need much width; the Tracks mixer to its right
+# gets whatever's left, since that one actually wants it (see
+# draw_track_controls). Falls back to 40% of the available width instead
+# on a narrow window rather than leaving the mixer with no room at all.
+GENERATE_PANEL_WIDTH = 380.0
+
+# Fixed height of the Setup row (server/model/instrument-provisioning
+# controls, logo to their left) -- needs an explicit height, not just
+# "whatever its content needs", since draw_logo() has to know a row_h to
+# center the logo art within. Sized generously enough that draw_setup_panel
+# never needs its own internal scrollbar at typical window widths.
+SETUP_ROW_HEIGHT = 190.0
 
 TRACK_PARAMS_KEY = "track_params_v1"
 
@@ -289,7 +303,7 @@ server_scale_presets = ["chromatic", "major", "natural_minor", "harmonic_minor",
 
 # Available checkpoints from GET /models, and the one to request from
 # /generate (persisted via infill.set_selected_model()/ExtState). The
-# picker in draw_setup_tab() stays hidden until available_models is
+# picker in draw_setup_panel() stays hidden until available_models is
 # non-empty -- i.e. until the server has actually been reached and /models
 # has answered at least once, per the "only once the server is active"
 # requirement. "" for selected_model means "use the server's own
@@ -430,13 +444,14 @@ ACTIONS = {
     "reset_all":               reset_all_settings,
 }
 
-def draw_setup_tab():
+def draw_setup_panel():
     """One-time-per-project setup: server address, model picker, track/
     instrument provisioning, and reset. These are rarely touched once
     configured, unlike Global Options/Track Controls which get used every
-    generation -- kept on their own tab so they don't compete for space
-    or visual weight with what you actually touch every run. Returns the
-    key of whichever ACTIONS entry was clicked this frame, or None.
+    generation -- kept in their own compact bar above the Generate/Tracks
+    panels so they don't compete for space or visual weight with what you
+    actually touch every run. Returns the key of whichever ACTIONS entry
+    was clicked this frame, or None.
     Callers must NOT invoke it here -- these can be slow (HTTP, generation)
     or open native modal dialogs, and doing that mid-frame (between
     Begin/End) can cause REAPER to repaint with a half-built widget tree,
@@ -504,7 +519,7 @@ def draw_generation_result():
     (seed, token/context usage, speed) plus, for a batch (num_candidates>1)
     result, the candidate swap buttons. Returns the clicked action key
     ("cancel_generation" or "batch_select_N"), or None -- callers must NOT
-    act on it here (see draw_setup_tab()'s docstring for why)."""
+    act on it here (see draw_setup_panel()'s docstring for why)."""
     if active_generation is not None:
         handle = active_generation["handle"]
         with handle.lock:
@@ -602,6 +617,21 @@ def draw_generation_result():
 # UI: Global Options
 # ---------------------------------------------------------------------------
 
+def _table_slider_width(label):
+    """Item width that actually leaves room for `label` to render, computed
+    from the current column's real available width -- SetNextItemWidth(-1)
+    (fill everything up to the edge) was the bug that made every Global
+    Options slider's label disappear: -1 hands the *entire* column to the
+    widget, so the label -- which Dear ImGui draws immediately after the
+    widget on the same line -- has zero space left and never appears at
+    all. This reserves label_width + a small gap first, floored so even a
+    label wider than the column still leaves the slider itself usable
+    (the label may then clip at the column edge, which is a far smaller
+    problem than being invisible everywhere)."""
+    avail_w, _ = imgui.GetContentRegionAvail(ctx)
+    label_w, _ = imgui.CalcTextSize(ctx, label)
+    return max(60.0, avail_w - label_w - 8.0)
+
 def _slider_grid(table_id, rows, params):
     """Draws (label, key, kind, lo, hi[, fmt]) rows as SliderInt/SliderDouble
     widgets two to a line in a table -- halves the vertical space vs. one
@@ -618,7 +648,7 @@ def _slider_grid(table_id, rows, params):
             if i % 2 == 0:
                 imgui.TableNextRow(ctx)
             imgui.TableNextColumn(ctx)
-            imgui.SetNextItemWidth(ctx, -1)
+            imgui.SetNextItemWidth(ctx, _table_slider_width(label))
             if kind == "int":
                 c, v = imgui.SliderInt(ctx, label, params[key], lo, hi)
             else:
@@ -650,21 +680,21 @@ def draw_global_options(params):
             try:
                 imgui.TableNextRow(ctx)
                 imgui.TableNextColumn(ctx)
-                imgui.SetNextItemWidth(ctx, -1)
+                imgui.SetNextItemWidth(ctx, _table_slider_width("Temperature"))
                 c, v = imgui.SliderDouble(ctx, "Temperature", params["temperature"], 0.1, 3.0, "%.2f")
                 if c: params["temperature"] = v; changed = True
                 imgui.TableNextColumn(ctx)
-                imgui.SetNextItemWidth(ctx, -1)
+                imgui.SetNextItemWidth(ctx, _table_slider_width("Context Size (Bars)"))
                 c, v = imgui.SliderInt(ctx, "Context Size (Bars)", params["model_dim"], 2, 16)
                 if c: params["model_dim"] = v; changed = True
 
                 imgui.TableNextRow(ctx)
                 imgui.TableNextColumn(ctx)
-                imgui.SetNextItemWidth(ctx, -1)
+                imgui.SetNextItemWidth(ctx, _table_slider_width("Bars Per Step"))
                 c, v = imgui.SliderInt(ctx, "Bars Per Step", bars_per_step_display, 1, params["model_dim"])
                 if c: params["bars_per_step"] = v; changed = True
                 imgui.TableNextColumn(ctx)
-                imgui.SetNextItemWidth(ctx, -1)
+                imgui.SetNextItemWidth(ctx, _table_slider_width("Tracks Per Step"))
                 c, v = imgui.SliderInt(ctx, "Tracks Per Step", params["tracks_per_step"], 1, 16)
                 if c: params["tracks_per_step"] = v; changed = True
             finally:
@@ -871,7 +901,7 @@ def draw_track_controls(track_params):
     top of the others. Returns (changed, clicked) -- changed is True if any
     per-track value was edited this frame (caller should persist); clicked
     is set to "refresh_model" if the Refresh button was pressed (run after
-    End(), same rule as draw_setup_tab())."""
+    End(), same rule as draw_setup_panel())."""
     global model_type
     changed = False
     clicked = None
@@ -921,22 +951,36 @@ def draw_track_controls(track_params):
             if i > 0:
                 imgui.SameLine(ctx)
 
-            imgui.PushID(ctx, guid)
-            imgui.BeginChild(ctx, "##strip", TRACK_STRIP_WIDTH, 0, imgui.ChildFlags_Borders())
+            # Combine the loop index with guid (not guid alone) -- a brand
+            # new track added this same session can transiently report an
+            # empty/not-yet-assigned GUID, and unlike the old
+            # CollapsingHeader (where a duplicate ID just meant two headers
+            # shared open/closed state -- a UI glitch), BeginChild registers
+            # an actual child *window* keyed by this ID: two strips
+            # colliding on it corrupts ReaImGui's internal window map,
+            # which is what "!ImGui_EndChild: Missing PopID()" followed by
+            # every subsequent call reporting an invalid context actually
+            # was. PushID/PopID both now live inside their own try/finally
+            # too, so an exception drawing one strip's contents can never
+            # leave the ID stack unbalanced for every frame after it.
+            imgui.PushID(ctx, f"track_{i}_{guid}")
             try:
-                imgui.TextWrapped(ctx, f"{i + 1}. {name}")
-                if p["ignore"]:
-                    imgui.TextColored(ctx, _signed32(0xFFAA33FF), "Ignored")
-                elif p["autoregressive"]:
-                    imgui.TextColored(ctx, _signed32(0x66CCFFFF), "Autoregressive")
-                imgui.Separator(ctx)
+                imgui.BeginChild(ctx, "##strip", TRACK_STRIP_WIDTH, 0, imgui.ChildFlags_Borders())
+                try:
+                    imgui.TextWrapped(ctx, f"{i + 1}. {name}")
+                    if p["ignore"]:
+                        imgui.TextColored(ctx, _signed32(0xFFAA33FF), "Ignored")
+                    elif p["autoregressive"]:
+                        imgui.TextColored(ctx, _signed32(0x66CCFFFF), "Autoregressive")
+                    imgui.Separator(ctx)
 
-                if _draw_track_strip_body(p, is_drum):
-                    track_params[guid] = p
-                    changed = True
+                    if _draw_track_strip_body(p, is_drum):
+                        track_params[guid] = p
+                        changed = True
+                finally:
+                    imgui.EndChild(ctx)
             finally:
-                imgui.EndChild(ctx)
-            imgui.PopID(ctx)
+                imgui.PopID(ctx)
     finally:
         imgui.EndChild(ctx)
 
@@ -960,34 +1004,25 @@ def draw_top_banner():
         imgui.PopFont(ctx)
 
 # ---------------------------------------------------------------------------
-# UI: Console log
+# UI: Logo + Console log
 # ---------------------------------------------------------------------------
 
-def draw_console(row_h):
-    # Logo drawn at a small font size so its ASCII art fits next to the
-    # console within row_h without clipping or forcing the row (and
-    # therefore the outer window) taller -- an outer window that overflows
-    # its budgeted height is what caused the EndChild/End crashes fixed
-    # earlier. Drawn in a fixed-width child (wider than the text itself) so
-    # it can be centered instead of hugging the console.
+def draw_logo(width, row_h):
+    """Draws the centered Metacreation Lab logo in a fixed-size child, at a
+    small font size so its ASCII art fits within row_h without clipping or
+    forcing the enclosing row (and therefore the outer window) taller -- an
+    outer window that overflows its budgeted height is what caused the
+    EndChild/End crashes fixed earlier. Shared between the Setup row (logo
+    on the left, now that the window is wide enough to afford it) and
+    nothing else currently, but kept as its own function rather than
+    inlined so that's just a call-site change if it moves again."""
     imgui.PushFont(ctx, mono_font, LOGO_FONT_SIZE)
     logo_w, logo_h = imgui.CalcTextSize(ctx, LOGO)
     imgui.PopFont(ctx)
 
-    avail_w, _ = imgui.GetContentRegionAvail(ctx)
-    console_w = max(100.0, avail_w - LOGO_CHILD_WIDTH - 16)
-
-    # Read-only multiline input instead of plain Text -- lets the user
-    # click-drag to select and Cmd/Ctrl+C to copy console output (e.g. to
-    # paste an error message elsewhere), which Text doesn't support.
-    imgui.InputTextMultiline(
-        ctx, "##console", "\n".join(log_lines), console_w, row_h,
-        imgui.InputTextFlags_ReadOnly())
-
-    imgui.SameLine(ctx)
-    imgui.BeginChild(ctx, "##logo", LOGO_CHILD_WIDTH, row_h)
+    imgui.BeginChild(ctx, "##logo", width, row_h)
     try:
-        imgui.SetCursorPos(ctx, max(0.0, (LOGO_CHILD_WIDTH - logo_w) / 2),
+        imgui.SetCursorPos(ctx, max(0.0, (width - logo_w) / 2),
                             max(0.0, (row_h - logo_h) / 2))
         imgui.PushFont(ctx, mono_font, LOGO_FONT_SIZE)
         try:
@@ -996,6 +1031,17 @@ def draw_console(row_h):
             imgui.PopFont(ctx)
     finally:
         imgui.EndChild(ctx)
+
+def draw_console(row_h):
+    # Read-only multiline input instead of plain Text -- lets the user
+    # click-drag to select and Cmd/Ctrl+C to copy console output (e.g. to
+    # paste an error message elsewhere), which Text doesn't support. Full
+    # width now -- the logo that used to share this row moved up to sit
+    # next to Setup instead (see loop()).
+    avail_w, _ = imgui.GetContentRegionAvail(ctx)
+    imgui.InputTextMultiline(
+        ctx, "##console", "\n".join(log_lines), avail_w, row_h,
+        imgui.InputTextFlags_ReadOnly())
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -1100,14 +1146,15 @@ def loop():
     is_open = True
 
     try:
-        # 900x700, not the old 560x1050 -- 1050px tall opened taller than
+        # 1150x700, not the old 560x1050 -- 1050px tall opened taller than
         # most laptop screens' usable height on first-ever launch, and
         # since ReaImGui persists geometry after that, the resize handle
         # needed to shrink it back down could end up off-screen with
-        # nothing to grab. Wider instead of taller fits the tabbed/
-        # 2-column layout better anyway (see draw_global_options/
-        # draw_track_controls).
-        imgui.SetNextWindowSize(ctx, 900, 700, imgui.Cond_FirstUseEver())
+        # nothing to grab. Wider instead of taller fits this layout better
+        # anyway: Generate and the Tracks mixer sit side by side (see the
+        # main_content block below), so there's more width to fill and
+        # less height needed than one long stacked column ever had.
+        imgui.SetNextWindowSize(ctx, 1150, 700, imgui.Cond_FirstUseEver())
         # This ReaImGui build persists window geometry across script runs,
         # and Cond_FirstUseEver never re-applies once that saved state
         # exists. If the window is ever dragged down to (near) zero height,
@@ -1118,7 +1165,16 @@ def loop():
         # every crash. Collapsing is left enabled; visible=False already
         # skips drawing safely below.
         imgui.SetNextWindowSizeConstraints(ctx, 500, 300, 100000, 100000)
-        visible, is_open = imgui.Begin(ctx, "MIDI-GPT Dashboard", True)
+        # "##layout2" (invisible in the title bar -- everything after "##"
+        # is ID-only, not displayed) gives this window a fresh identity with
+        # no saved geometry, so the new SetNextWindowSize above actually
+        # takes effect. Without it, Cond_FirstUseEver is a no-op for anyone
+        # who already has ReaImGui-persisted geometry saved under the old
+        # "MIDI-GPT Dashboard" id from before this layout existed -- it only
+        # applies the very first time a given window id is ever seen, not
+        # on every code change. Bump this suffix again in the future if the
+        # default size/layout changes enough to want to reset it once more.
+        visible, is_open = imgui.Begin(ctx, "MIDI-GPT Dashboard##layout2", True)
 
         if visible:
             try:
@@ -1154,47 +1210,58 @@ def loop():
 
                 imgui.BeginChild(ctx, "##main_content", 0, content_h)
                 try:
-                    # Generate / Tracks / Setup instead of one long stacked
-                    # column -- Generate (Global Options + Run Infill +
-                    # progress) is what's touched every run and is the tab
-                    # that opens by default; Tracks (the mixer strips) and
-                    # Setup (server/model/instrument provisioning, rarely
-                    # touched once configured) are one click away instead of
-                    # competing for the same vertical space.
-                    if imgui.BeginTabBar(ctx, "##main_tabs"):
-                        try:
-                            tab_open, _ = imgui.BeginTabItem(ctx, "Generate")
-                            if tab_open:
-                                try:
-                                    if imgui.Button(ctx, "Run Infill", -1, 32):
-                                        clicked = "run_infill"
-                                    gen_clicked = draw_generation_result()
-                                    if gen_clicked:
-                                        clicked = gen_clicked
-                                    imgui.Spacing(ctx)
-                                    need_save_global = draw_global_options(params)
-                                finally:
-                                    imgui.EndTabItem(ctx)
+                    # Setup (rarely touched once configured) shares its row
+                    # with the logo, logo on the left -- now that the window
+                    # is wide enough to afford it, that's a free row back
+                    # instead of the logo only ever appearing next to the
+                    # console. Below this row, Generate (Run Infill +
+                    # progress + Global Options -- what's touched every run)
+                    # and the Tracks mixer sit side by side, both visible at
+                    # once, rather than switching between them -- Generate
+                    # gets a fixed-ish width column since it's mostly
+                    # vertical sliders; the mixer gets whatever's left, since
+                    # that's the one that actually wants width (it scrolls
+                    # horizontally per track).
+                    imgui.SeparatorText(ctx, "Setup")
+                    draw_logo(LOGO_CHILD_WIDTH, SETUP_ROW_HEIGHT)
+                    imgui.SameLine(ctx)
+                    imgui.BeginChild(ctx, "##setup_body", 0, SETUP_ROW_HEIGHT)
+                    try:
+                        setup_clicked = draw_setup_panel()
+                        if setup_clicked:
+                            clicked = setup_clicked
+                    finally:
+                        imgui.EndChild(ctx)
 
-                            tab_open, _ = imgui.BeginTabItem(ctx, "Tracks")
-                            if tab_open:
-                                try:
-                                    need_save_track, track_clicked = draw_track_controls(track_params)
-                                    if track_clicked:
-                                        clicked = track_clicked
-                                finally:
-                                    imgui.EndTabItem(ctx)
+                    imgui.Spacing(ctx)
+                    imgui.Separator(ctx)
+                    imgui.Spacing(ctx)
 
-                            tab_open, _ = imgui.BeginTabItem(ctx, "Setup")
-                            if tab_open:
-                                try:
-                                    setup_clicked = draw_setup_tab()
-                                    if setup_clicked:
-                                        clicked = setup_clicked
-                                finally:
-                                    imgui.EndTabItem(ctx)
-                        finally:
-                            imgui.EndTabBar(ctx)
+                    avail_w, avail_h = imgui.GetContentRegionAvail(ctx)
+                    generate_w = min(GENERATE_PANEL_WIDTH, max(260.0, avail_w * 0.4))
+
+                    imgui.BeginChild(ctx, "##generate_panel", generate_w, avail_h)
+                    try:
+                        imgui.SeparatorText(ctx, "Generate")
+                        if imgui.Button(ctx, "Run Infill", -1, 32):
+                            clicked = "run_infill"
+                        gen_clicked = draw_generation_result()
+                        if gen_clicked:
+                            clicked = gen_clicked
+                        imgui.Spacing(ctx)
+                        need_save_global = draw_global_options(params)
+                    finally:
+                        imgui.EndChild(ctx)
+
+                    imgui.SameLine(ctx)
+                    imgui.BeginChild(ctx, "##tracks_panel", 0, avail_h)
+                    try:
+                        imgui.SeparatorText(ctx, "Tracks")
+                        need_save_track, track_clicked = draw_track_controls(track_params)
+                        if track_clicked:
+                            clicked = track_clicked
+                    finally:
+                        imgui.EndChild(ctx)
                 finally:
                     imgui.EndChild(ctx)
 
