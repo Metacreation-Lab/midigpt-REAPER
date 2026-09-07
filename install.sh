@@ -388,11 +388,32 @@ if [ -f "$REAPER_INI" ]; then
             set_reaper_ini() {
                 local key="$1" value="$2" file="$3"
                 if grep -q "^${key}=" "$file" 2>/dev/null; then
-                    sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
+                    awk -v k="$key" -v v="$value" '
+                        $0 ~ "^" k "=" { print k "=" v; next }
+                        { print }
+                    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
                 else
-                    sed -i.bak "/^\[REAPER\]/a\\
-${key}=${value}
-" "$file"
+                    # REAPER writes the section header as [reaper] (lowercase)
+                    # on some versions/platforms and [REAPER] on others -- match
+                    # either. If no such section exists yet (fresh reaper.ini),
+                    # append one at the end of the file.
+                    awk -v k="$key" -v v="$value" '
+                        BEGIN { done = 0 }
+                        {
+                            print
+                            if (!done && tolower($0) == "[reaper]") {
+                                print k "=" v
+                                done = 1
+                            }
+                        }
+                        END {
+                            if (!done) {
+                                print ""
+                                print "[REAPER]"
+                                print k "=" v
+                            }
+                        }
+                    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
                 fi
             }
 
@@ -407,9 +428,14 @@ ${key}=${value}
                 set_reaper_ini "pythonlibdll64" "$PY_LIB_FILE" "$REAPER_INI"
             fi
 
-            rm -f "${REAPER_INI}.bak"
-            ok "ReaScript enabled (reascript=1)"
-            ok "Python library: $PY_LIB_DIR/$PY_LIB_FILE"
+            if grep -q "^reascript=1" "$REAPER_INI" && grep -q "^pythonlibdll64=" "$REAPER_INI"; then
+                ok "ReaScript enabled (reascript=1)"
+                ok "Python library: $PY_LIB_DIR/$PY_LIB_FILE"
+            else
+                warn "Failed to write ReaScript/Python settings to reaper.ini"
+                echo "  Configure manually: Options > Preferences > Plug-Ins > ReaScript"
+                echo "    Python library: $PY_LIB_DIR/$PY_LIB_FILE"
+            fi
         else
             warn "Could not detect Python dynamic library path"
             echo "  You'll need to configure this manually in REAPER:"
