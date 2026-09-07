@@ -81,6 +81,12 @@ MAX_LOG_LINES = 500
 CONSOLE_ROW_HEIGHT = 200
 MIN_CONTENT_HEIGHT = 250
 
+# Width of one track's mixer-style channel strip in the Tracks tab -- wide
+# enough for "Pitch Class Set Size (0=Any)"-length labels to wrap at most
+# two lines, narrow enough that several tracks fit before the horizontal
+# scrollbar kicks in.
+TRACK_STRIP_WIDTH = 260.0
+
 TRACK_PARAMS_KEY = "track_params_v1"
 
 DEFAULT_TRACK_PARAMS = {
@@ -283,7 +289,7 @@ server_scale_presets = ["chromatic", "major", "natural_minor", "harmonic_minor",
 
 # Available checkpoints from GET /models, and the one to request from
 # /generate (persisted via infill.set_selected_model()/ExtState). The
-# picker in draw_actions() stays hidden until available_models is
+# picker in draw_setup_tab() stays hidden until available_models is
 # non-empty -- i.e. until the server has actually been reached and /models
 # has answered at least once, per the "only once the server is active"
 # requirement. "" for selected_model means "use the server's own
@@ -424,13 +430,18 @@ ACTIONS = {
     "reset_all":               reset_all_settings,
 }
 
-def draw_actions():
-    """Draws the action buttons. Returns the key of whichever ACTIONS entry
-    was clicked this frame, or None. Callers must NOT invoke it here --
-    these can be slow (HTTP, generation) or open native modal dialogs, and
-    doing that mid-frame (between Begin/End) can cause REAPER to repaint
-    with a half-built widget tree, corrupting ReaImGui's internal state.
-    Run the returned action only after imgui.End() has closed the frame."""
+def draw_setup_tab():
+    """One-time-per-project setup: server address, model picker, track/
+    instrument provisioning, and reset. These are rarely touched once
+    configured, unlike Global Options/Track Controls which get used every
+    generation -- kept on their own tab so they don't compete for space
+    or visual weight with what you actually touch every run. Returns the
+    key of whichever ACTIONS entry was clicked this frame, or None.
+    Callers must NOT invoke it here -- these can be slow (HTTP, generation)
+    or open native modal dialogs, and doing that mid-frame (between
+    Begin/End) can cause REAPER to repaint with a half-built widget tree,
+    corrupting ReaImGui's internal state. Run the returned action only
+    after imgui.End() has closed the frame."""
     clicked = None
 
     global selected_model
@@ -459,6 +470,9 @@ def draw_actions():
     else:
         imgui.TextDisabled(ctx, "Model: (checking server...)")
 
+    imgui.Spacing(ctx)
+    imgui.SeparatorText(ctx, "Tracks && Instruments")
+
     if imgui.Button(ctx, "Setup Tracks"):
         clicked = "setup_tracks"
 
@@ -470,8 +484,8 @@ def draw_actions():
     if imgui.Button(ctx, "Apply Template to Selected Tracks"):
         clicked = "apply_soundfont_template"
 
-    if imgui.Button(ctx, "Run Infill", -1, 32):
-        clicked = "run_infill"
+    imgui.Spacing(ctx)
+    imgui.SeparatorText(ctx, "Reset")
 
     if imgui.Button(ctx, "Reset Global Options && Track Controls"):
         clicked = "reset_all"
@@ -490,7 +504,7 @@ def draw_generation_result():
     (seed, token/context usage, speed) plus, for a batch (num_candidates>1)
     result, the candidate swap buttons. Returns the clicked action key
     ("cancel_generation" or "batch_select_N"), or None -- callers must NOT
-    act on it here (see draw_actions()'s docstring for why)."""
+    act on it here (see draw_setup_tab()'s docstring for why)."""
     if active_generation is not None:
         handle = active_generation["handle"]
         with handle.lock:
@@ -588,80 +602,141 @@ def draw_generation_result():
 # UI: Global Options
 # ---------------------------------------------------------------------------
 
+def _slider_grid(table_id, rows, params):
+    """Draws (label, key, kind, lo, hi[, fmt]) rows as SliderInt/SliderDouble
+    widgets two to a line in a table -- halves the vertical space vs. one
+    full-width slider per row, which is most of why the old single-column
+    Global Options section ran off the bottom of the window. Returns True
+    if any value changed this frame."""
+    changed = False
+    if not imgui.BeginTable(ctx, table_id, 2):
+        return False
+    try:
+        for i, row in enumerate(rows):
+            label, key, kind, lo, hi = row[:5]
+            fmt = row[5] if len(row) > 5 else "%.2f"
+            if i % 2 == 0:
+                imgui.TableNextRow(ctx)
+            imgui.TableNextColumn(ctx)
+            imgui.SetNextItemWidth(ctx, -1)
+            if kind == "int":
+                c, v = imgui.SliderInt(ctx, label, params[key], lo, hi)
+            else:
+                c, v = imgui.SliderDouble(ctx, label, params[key], lo, hi, fmt)
+            if c:
+                params[key] = v
+                changed = True
+    finally:
+        imgui.EndTable(ctx)
+    return changed
+
 def draw_global_options(params):
-    """Draws all Global Options controls. Returns True if any value changed
-    this frame (caller should persist)."""
+    """Draws Global Options grouped into collapsible sections instead of one
+    long always-expanded list. "Generation" (temperature/context/bars/
+    tracks-per-step) is what actually gets touched every run, so it starts
+    open; "Hard Limits"/"Sampling"/"Checks" are occasional/advanced tuning,
+    so they start collapsed -- one click away, but not eating vertical
+    space by default. Returns True if any value changed this frame (caller
+    should persist)."""
     changed = False
 
-    imgui.SeparatorText(ctx, "Generation")
+    if imgui.CollapsingHeader(ctx, "Generation", None, imgui.TreeNodeFlags_DefaultOpen())[0]:
+        # Bars Per Step's max tracks model_dim, which can shrink below a
+        # previously-saved value -- clamp for display the same way the
+        # single-column version did, without touching the saved value
+        # unless the user actually moves this slider.
+        bars_per_step_display = min(params["bars_per_step"], params["model_dim"])
+        if imgui.BeginTable(ctx, "##gen_grid", 2):
+            try:
+                imgui.TableNextRow(ctx)
+                imgui.TableNextColumn(ctx)
+                imgui.SetNextItemWidth(ctx, -1)
+                c, v = imgui.SliderDouble(ctx, "Temperature", params["temperature"], 0.1, 3.0, "%.2f")
+                if c: params["temperature"] = v; changed = True
+                imgui.TableNextColumn(ctx)
+                imgui.SetNextItemWidth(ctx, -1)
+                c, v = imgui.SliderInt(ctx, "Context Size (Bars)", params["model_dim"], 2, 16)
+                if c: params["model_dim"] = v; changed = True
 
-    c, v = imgui.SliderDouble(ctx, "Temperature", params["temperature"], 0.1, 3.0, "%.2f")
-    if c: params["temperature"] = v; changed = True
+                imgui.TableNextRow(ctx)
+                imgui.TableNextColumn(ctx)
+                imgui.SetNextItemWidth(ctx, -1)
+                c, v = imgui.SliderInt(ctx, "Bars Per Step", bars_per_step_display, 1, params["model_dim"])
+                if c: params["bars_per_step"] = v; changed = True
+                imgui.TableNextColumn(ctx)
+                imgui.SetNextItemWidth(ctx, -1)
+                c, v = imgui.SliderInt(ctx, "Tracks Per Step", params["tracks_per_step"], 1, 16)
+                if c: params["tracks_per_step"] = v; changed = True
+            finally:
+                imgui.EndTable(ctx)
 
-    c, v = imgui.SliderInt(ctx, "Context Size (Bars)", params["model_dim"], 2, 16)
-    if c: params["model_dim"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Bars Per Step", min(params["bars_per_step"], params["model_dim"]), 1, params["model_dim"])
-    if c: params["bars_per_step"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Tracks Per Step", params["tracks_per_step"], 1, 16)
-    if c: params["tracks_per_step"] = v; changed = True
-
-    imgui.SeparatorText(ctx, "Hard Limits")
-
-    c, v = imgui.SliderInt(ctx, "Polyphony Hard Limit (0=Off)", params["polyphony_hard_limit"], 0, 32)
-    if c: params["polyphony_hard_limit"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Density Hard Limit (0=Off)", params["density_hard_limit"], 0, 64)
-    if c: params["density_hard_limit"] = v; changed = True
-
-    imgui.SeparatorText(ctx, "Sampling")
-
-    c, v = imgui.SliderInt(ctx, "Max Attempts", params["max_attempts"], 1, 10)
-    if c: params["max_attempts"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Temp Escalation (1.0=Off)", params["temp_escalation"], 1.0, 3.0, "%.2f")
-    if c: params["temp_escalation"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Top-p (1.0=Off)", params["top_p"], 0.0, 1.0, "%.2f")
-    if c: params["top_p"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Top-k (0=Off)", params["top_k"], 0, 500)
-    if c: params["top_k"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Anti-nucleus mask_p (0.0=Off)", params["mask_p"], 0.0, 0.95, "%.2f")
-    if c: params["mask_p"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Anti-nucleus mask_k (0=Off)", params["mask_k"], 0, 100)
-    if c: params["mask_k"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Random Seed (-1=Random)", params["seed"], -1, 999999)
-    if c: params["seed"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Batch Candidates (num_candidates)", params.get("num_candidates", 1), 1, 16)
-    if c: params["num_candidates"] = v; changed = True
-    if params.get("num_candidates", 1) > 1:
-        imgui.TextDisabled(ctx, "Token streaming is unavailable above 1 candidate -- each run waits for all of them.")
-
-    imgui.SeparatorText(ctx, "Checks")
-
-    checks_idx = params["checks_idx"]
-    for i, label in enumerate(CHECKS_LABELS):
-        c, checks_idx = imgui.RadioButtonEx(ctx, label, checks_idx, i)
-        if c:
-            params["checks_idx"] = checks_idx
+    if imgui.CollapsingHeader(ctx, "Hard Limits")[0]:
+        limit_rows = [
+            ("Polyphony Hard Limit (0=Off)", "polyphony_hard_limit", "int", 0, 32),
+            ("Density Hard Limit (0=Off)", "density_hard_limit", "int", 0, 64),
+        ]
+        if _slider_grid("##limits_grid", limit_rows, params):
             changed = True
-        if i < len(CHECKS_LABELS) - 1:
-            imgui.SameLine(ctx)
 
-    c, v = imgui.Checkbox(ctx, "Shuffle Steps", bool(params["shuffle"]))
-    if c: params["shuffle"] = int(v); changed = True
+    if imgui.CollapsingHeader(ctx, "Sampling")[0]:
+        sampling_rows = [
+            ("Max Attempts", "max_attempts", "int", 1, 10),
+            ("Temp Escalation (1.0=Off)", "temp_escalation", "double", 1.0, 3.0),
+            ("Top-p (1.0=Off)", "top_p", "double", 0.0, 1.0),
+            ("Top-k (0=Off)", "top_k", "int", 0, 500),
+            ("Anti-nucleus mask_p (0.0=Off)", "mask_p", "double", 0.0, 0.95),
+            ("Anti-nucleus mask_k (0=Off)", "mask_k", "int", 0, 100),
+            ("Random Seed (-1=Random)", "seed", "int", -1, 999999),
+            ("Batch Candidates (num_candidates)", "num_candidates", "int", 1, 16),
+        ]
+        if _slider_grid("##sampling_grid", sampling_rows, params):
+            changed = True
+        if params.get("num_candidates", 1) > 1:
+            imgui.TextDisabled(ctx, "Token streaming is unavailable above 1 candidate -- each run waits for all of them.")
+
+    if imgui.CollapsingHeader(ctx, "Checks")[0]:
+        checks_idx = params["checks_idx"]
+        for i, label in enumerate(CHECKS_LABELS):
+            c, checks_idx = imgui.RadioButtonEx(ctx, label, checks_idx, i)
+            if c:
+                params["checks_idx"] = checks_idx
+                changed = True
+            if i < len(CHECKS_LABELS) - 1:
+                imgui.SameLine(ctx)
+
+        c, v = imgui.Checkbox(ctx, "Shuffle Steps", bool(params["shuffle"]))
+        if c: params["shuffle"] = int(v); changed = True
 
     return changed
 
 # ---------------------------------------------------------------------------
 # UI: Per-Track Controls
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Strip-widget helpers -- a mixer channel strip is only ~TRACK_STRIP_WIDTH
+# px wide, too narrow for Dear ImGui's normal "widget, then label on the
+# same line" layout (there's no room left for the label once the widget
+# fills the width). Every strip control instead draws its label on its own
+# line above a hidden-label, full-width widget below it. TextWrapped (not
+# Text) for labels since some ("Pitch Class Set Size (0=Any)") are longer
+# than the strip is wide.
+# ---------------------------------------------------------------------------
+
+def _strip_slider_int(label, value, lo, hi, id_suffix):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.SliderInt(ctx, f"##{id_suffix}", value, lo, hi)
+
+def _strip_slider_double(label, value, lo, hi, id_suffix, fmt="%.2f"):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.SliderDouble(ctx, f"##{id_suffix}", value, lo, hi, fmt)
+
+def _strip_combo(label, idx, items, id_suffix):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.Combo(ctx, f"##{id_suffix}", idx, "\0".join(items) + "\0")
 
 def _draw_pitch_remix_controls(p):
     """Pitch mask and remix (variation) controls for one track. Gated
@@ -673,65 +748,130 @@ def _draw_pitch_remix_controls(p):
     if server_capabilities.get("supports_pitch_mask"):
         imgui.SeparatorText(ctx, "Pitch Mask")
 
-        c, v = imgui.Combo(ctx, "Pitch Mask Mode", p["pitch_mask_mode"], "Off\0Scale\0Pitch Classes\0")
+        c, v = _strip_combo("Pitch Mask Mode", p["pitch_mask_mode"], ["Off", "Scale", "Pitch Classes"], "pmmode")
         if c: p["pitch_mask_mode"] = v; changed = True
 
         if p["pitch_mask_mode"] == 1:
-            c, v = imgui.Combo(ctx, "Root", p["pitch_mask_root"], "\0".join(NOTE_NAMES) + "\0")
+            c, v = _strip_combo("Root", p["pitch_mask_root"], NOTE_NAMES, "pmroot")
             if c: p["pitch_mask_root"] = v; changed = True
 
             scale_idx = server_scale_presets.index(p["pitch_mask_scale"]) if p["pitch_mask_scale"] in server_scale_presets else 0
-            c, scale_idx = imgui.Combo(ctx, "Scale", scale_idx, "\0".join(server_scale_presets) + "\0")
+            c, scale_idx = _strip_combo("Scale", scale_idx, server_scale_presets, "pmscale")
             if c: p["pitch_mask_scale"] = server_scale_presets[scale_idx]; changed = True
 
         elif p["pitch_mask_mode"] == 2:
-            imgui.Text(ctx, "Allowed pitch classes:")
-            for pcls in range(12):
-                bit = 1 << pcls
-                checked = bool(p["pitch_mask_classes"] & bit)
-                c, v = imgui.Checkbox(ctx, f"{NOTE_NAMES[pcls]}##pc{pcls}", checked)
-                if c:
-                    p["pitch_mask_classes"] = (p["pitch_mask_classes"] | bit) if v else (p["pitch_mask_classes"] & ~bit)
-                    changed = True
-                if pcls < 11:
-                    imgui.SameLine(ctx)
+            imgui.TextWrapped(ctx, "Allowed pitch classes:")
+            # 3 per row (not all 12 on one SameLine chain like the old
+            # full-width layout) -- 12 checkboxes-with-labels don't fit
+            # across a ~260px strip.
+            for row_start in range(0, 12, 3):
+                for pcls in range(row_start, min(row_start + 3, 12)):
+                    bit = 1 << pcls
+                    checked = bool(p["pitch_mask_classes"] & bit)
+                    c, v = imgui.Checkbox(ctx, f"{NOTE_NAMES[pcls]}##pc{pcls}", checked)
+                    if c:
+                        p["pitch_mask_classes"] = (p["pitch_mask_classes"] | bit) if v else (p["pitch_mask_classes"] & ~bit)
+                        changed = True
+                    if pcls < row_start + 2:
+                        imgui.SameLine(ctx)
 
         if p["pitch_mask_mode"] != 0:
-            c, v = imgui.Combo(ctx, "Soft Shape", p["pitch_shape_mode"], "Off\0Uniform Register\0Normal Register\0")
+            c, v = _strip_combo("Soft Shape", p["pitch_shape_mode"], ["Off", "Uniform Register", "Normal Register"], "pshape")
             if c: p["pitch_shape_mode"] = v; changed = True
 
             if p["pitch_shape_mode"] == 1:
-                c, v = imgui.SliderInt(ctx, "Shape Min Pitch", p["pitch_shape_min"], 0, 127)
+                c, v = _strip_slider_int("Shape Min Pitch", p["pitch_shape_min"], 0, 127, "shmin")
                 if c: p["pitch_shape_min"] = v; changed = True
-                c, v = imgui.SliderInt(ctx, "Shape Max Pitch", p["pitch_shape_max"], 0, 127)
+                c, v = _strip_slider_int("Shape Max Pitch", p["pitch_shape_max"], 0, 127, "shmax")
                 if c: p["pitch_shape_max"] = v; changed = True
             elif p["pitch_shape_mode"] == 2:
-                c, v = imgui.SliderInt(ctx, "Shape Mean Pitch", p["pitch_shape_mean"], 0, 127)
+                c, v = _strip_slider_int("Shape Mean Pitch", p["pitch_shape_mean"], 0, 127, "shmean")
                 if c: p["pitch_shape_mean"] = v; changed = True
-                c, v = imgui.SliderDouble(ctx, "Shape Std Dev", p["pitch_shape_std"], 0.5, 40.0, "%.1f")
+                c, v = _strip_slider_double("Shape Std Dev", p["pitch_shape_std"], 0.5, 40.0, "shstd", "%.1f")
                 if c: p["pitch_shape_std"] = v; changed = True
 
     if server_capabilities.get("supports_remix"):
         imgui.SeparatorText(ctx, "Variation (Remix)")
-        c, v = imgui.Checkbox(ctx, "Remix This Track's Bars", bool(p["remix_enabled"]))
+        c, v = imgui.Checkbox(ctx, "Remix This Track's Bars##remixon", bool(p["remix_enabled"]))
         if c: p["remix_enabled"] = int(v); changed = True
 
         if p["remix_enabled"]:
-            imgui.TextDisabled(ctx, "Regenerates the bars ALREADY on this track as a variation of what's there --")
-            imgui.TextDisabled(ctx, "Ignore/Autoregressive still decide which bars.")
-            c, v = imgui.SliderDouble(ctx, "Remix Amount", p["remix_amount"], 0.0, 1.0, "%.2f")
+            imgui.TextWrapped(ctx, "Regenerates the bars already here as a variation. Ignore/AR still decide which bars.")
+            c, v = _strip_slider_double("Remix Amount", p["remix_amount"], 0.0, 1.0, "remixamt")
             if c: p["remix_amount"] = v; changed = True
-            c, v = imgui.Combo(ctx, "Remix Mode", p["remix_mode"], "Pitch Only\0Pitch + Duration\0")
+            c, v = _strip_combo("Remix Mode", p["remix_mode"], ["Pitch Only", "Pitch + Duration"], "remixmode")
             if c: p["remix_mode"] = v; changed = True
 
     return changed
 
+def _draw_track_strip_body(p, is_drum):
+    """Draws one track's full parameter set, stacked vertically top to
+    bottom within its strip (label above, hidden-label full-width widget
+    below -- see the strip-widget helpers above). Same fields and
+    drum/melodic/model_type gating as before, just laid out narrow-and-tall
+    instead of wide-and-collapsed. Mutates p in place; returns True if
+    anything changed this frame."""
+    changed = False
+
+    c, v = imgui.Checkbox(ctx, "Ignore##ign", bool(p["ignore"]))
+    if c: p["ignore"] = int(v); changed = True
+    c, v = imgui.Checkbox(ctx, "Autoregressive##ar", bool(p["autoregressive"]))
+    if c: p["autoregressive"] = int(v); changed = True
+
+    if is_drum is None:
+        imgui.TextWrapped(ctx, "Instrument not detected -- showing all controls. Density=drum only, rest=melodic only.")
+
+    if is_drum is not False:
+        c, v = _strip_slider_int("Density (0=Any)", p["density"], 0, 10, "dens")
+        if c: p["density"] = v; changed = True
+
+    if is_drum is not True:
+        c, v = _strip_slider_int("Polyphony Min (0=Any)", p["min_polyphony_q"], 0, 10, "pmin")
+        if c: p["min_polyphony_q"] = v; changed = True
+
+        c, v = _strip_slider_int("Polyphony Max (0=Any)", p["max_polyphony_q"], 0, 10, "pmax")
+        if c: p["max_polyphony_q"] = v; changed = True
+
+        c, v = _strip_combo("Note Duration Min", p["min_note_duration_q"], NOTE_DURATION_LABELS, "ndmin")
+        if c: p["min_note_duration_q"] = v; changed = True
+
+        c, v = _strip_combo("Note Duration Max", p["max_note_duration_q"], NOTE_DURATION_LABELS, "ndmax")
+        if c: p["max_note_duration_q"] = v; changed = True
+
+    if model_type in ("prism", "expressive"):
+        if is_drum is not True:
+            c, v = _strip_combo("Key Signature", p["key_signature"], KEY_SIGNATURE_LABELS, "key")
+            if c: p["key_signature"] = v; changed = True
+
+            c, v = _strip_slider_int("Pitch Range (0=Any)", p["pitch_range"], 0, 128, "prange")
+            if c: p["pitch_range"] = v; changed = True
+
+        c, v = _strip_slider_int("Silence Proportion (0=Any)", p["silence_proportion"], 0, 10, "sil")
+        if c: p["silence_proportion"] = v; changed = True
+
+        if is_drum is not True:
+            c, v = _strip_slider_int("Pitch Class Set Size (0=Any)", p["pitch_class_set"], 0, 13, "pcset")
+            if c: p["pitch_class_set"] = v; changed = True
+
+    if model_type == "expressive":
+        c, v = _strip_combo("Quantization Grid Depth (NOMML)", p["nomml"], NOMML_LABELS, "nomml")
+        if c: p["nomml"] = v; changed = True
+
+    if _draw_pitch_remix_controls(p):
+        changed = True
+
+    return changed
+
 def draw_track_controls(track_params):
-    """Draws the Model selector and one collapsible section per project
-    track. Returns (changed, clicked) -- changed is True if any per-track
-    value was edited this frame (caller should persist); clicked is set to
-    "refresh_model" if the Refresh button was pressed (run after End(), same
-    rule as draw_actions())."""
+    """Draws the Model selector, then a horizontally-scrolling mixer-style
+    strip per project track -- like a DAW mixer, each track is a narrow,
+    bordered, independently-vertically-scrolling column instead of a
+    full-width CollapsingHeader. N tracks grow the layout sideways
+    (scrollable) instead of each one eating unbounded vertical height on
+    top of the others. Returns (changed, clicked) -- changed is True if any
+    per-track value was edited this frame (caller should persist); clicked
+    is set to "refresh_model" if the Refresh button was pressed (run after
+    End(), same rule as draw_setup_tab())."""
     global model_type
     changed = False
     clicked = None
@@ -752,99 +892,53 @@ def draw_track_controls(track_params):
         imgui.TextDisabled(ctx, "No tracks in this project yet.")
         return changed, clicked
 
-    for i in range(num_tracks):
-        track = RPR_GetTrack(0, i)
-        guid = get_track_guid(track)
-        name = RPR_GetSetMediaTrackInfo_String(track, "P_NAME", "", False)[3] or f"Track {i + 1}"
+    imgui.Spacing(ctx)
+    _, avail_h = imgui.GetContentRegionAvail(ctx)
+    imgui.BeginChild(ctx, "##track_mixer", 0, max(1.0, avail_h), None, imgui.WindowFlags_HorizontalScrollbar())
+    try:
+        for i in range(num_tracks):
+            track = RPR_GetTrack(0, i)
+            guid = get_track_guid(track)
+            name = RPR_GetSetMediaTrackInfo_String(track, "P_NAME", "", False)[3] or f"Track {i + 1}"
 
-        p = dict(DEFAULT_TRACK_PARAMS)
-        p.update(track_params.get(guid, {}))
+            p = dict(DEFAULT_TRACK_PARAMS)
+            p.update(track_params.get(guid, {}))
 
-        # Density only ever affects drum tracks, and Polyphony/Note
-        # Duration/Key Signature/Pitch Range/Pitch Class Set only ever
-        # affect melodic tracks -- infill.py's _compute_track_prompt_fields
-        # silently drops whichever half doesn't apply. The track name is
-        # ground truth for instrument identity (Setup Tracks' MIDI-content
-        # detection only exists to auto-assign that name once); only fall
-        # back to MIDI-content detection for a track that hasn't been
-        # named/resolved yet. None (neither resolves) shows both rather
-        # than guessing wrong.
-        instrument = setup_tracks.GM_NAME_TO_INSTRUMENT.get(name.strip())
-        if instrument is None:
-            instrument = setup_tracks.detect_track_instrument(track)
-        is_drum = (instrument == 128) if instrument is not None else None
+            # Density only ever affects drum tracks, and Polyphony/Note
+            # Duration/Key Signature/Pitch Range/Pitch Class Set only ever
+            # affect melodic tracks -- infill.py's _compute_track_prompt_fields
+            # silently drops whichever half doesn't apply. The track name is
+            # ground truth for instrument identity (Setup Tracks' MIDI-content
+            # detection only exists to auto-assign that name once); only fall
+            # back to MIDI-content detection for a track that hasn't been
+            # named/resolved yet. None (neither resolves) shows both rather
+            # than guessing wrong.
+            instrument = setup_tracks.GM_NAME_TO_INSTRUMENT.get(name.strip())
+            if instrument is None:
+                instrument = setup_tracks.detect_track_instrument(track)
+            is_drum = (instrument == 128) if instrument is not None else None
 
-        header = f"{i + 1}. {name}"
-        if p["ignore"]:
-            header += "  [Ignored]"
-        elif p["autoregressive"]:
-            header += "  [Autoregressive]"
+            if i > 0:
+                imgui.SameLine(ctx)
 
-        imgui.PushID(ctx, guid)
-        track_changed = False
+            imgui.PushID(ctx, guid)
+            imgui.BeginChild(ctx, "##strip", TRACK_STRIP_WIDTH, 0, imgui.ChildFlags_Borders())
+            try:
+                imgui.TextWrapped(ctx, f"{i + 1}. {name}")
+                if p["ignore"]:
+                    imgui.TextColored(ctx, _signed32(0xFFAA33FF), "Ignored")
+                elif p["autoregressive"]:
+                    imgui.TextColored(ctx, _signed32(0x66CCFFFF), "Autoregressive")
+                imgui.Separator(ctx)
 
-        # "###" keeps the header's open/closed state tied to a stable ID
-        # even though the visible label (before "###") changes when the
-        # [Ignored]/[Autoregressive] suffix is added or removed -- without
-        # it, CollapsingHeader treats the changed text as a brand new
-        # widget and snaps back to its default (closed) state.
-        expanded, _ = imgui.CollapsingHeader(ctx, header + "###header")
-        if expanded:
-            c, v = imgui.Checkbox(ctx, "Ignore Track", bool(p["ignore"]))
-            if c: p["ignore"] = int(v); track_changed = True
-            imgui.SameLine(ctx)
-            c, v = imgui.Checkbox(ctx, "Autoregressive", bool(p["autoregressive"]))
-            if c: p["autoregressive"] = int(v); track_changed = True
-
-            if is_drum is None:
-                imgui.TextDisabled(ctx, "Instrument not detected -- showing all controls below.")
-                imgui.TextDisabled(ctx, "Density applies to drum tracks only; the rest apply to melodic tracks only.")
-
-            if is_drum is not False:
-                c, v = imgui.SliderInt(ctx, "Density (0=Any)", p["density"], 0, 10)
-                if c: p["density"] = v; track_changed = True
-
-            if is_drum is not True:
-                c, v = imgui.SliderInt(ctx, "Polyphony Min (0=Any)", p["min_polyphony_q"], 0, 10)
-                if c: p["min_polyphony_q"] = v; track_changed = True
-
-                c, v = imgui.SliderInt(ctx, "Polyphony Max (0=Any)", p["max_polyphony_q"], 0, 10)
-                if c: p["max_polyphony_q"] = v; track_changed = True
-
-                c, v = imgui.Combo(ctx, "Note Duration Min", p["min_note_duration_q"], "\0".join(NOTE_DURATION_LABELS) + "\0")
-                if c: p["min_note_duration_q"] = v; track_changed = True
-
-                c, v = imgui.Combo(ctx, "Note Duration Max", p["max_note_duration_q"], "\0".join(NOTE_DURATION_LABELS) + "\0")
-                if c: p["max_note_duration_q"] = v; track_changed = True
-
-            if model_type in ("prism", "expressive"):
-                if is_drum is not True:
-                    c, v = imgui.Combo(ctx, "Key Signature", p["key_signature"], "\0".join(KEY_SIGNATURE_LABELS) + "\0")
-                    if c: p["key_signature"] = v; track_changed = True
-
-                    c, v = imgui.SliderInt(ctx, "Pitch Range (0=Any)", p["pitch_range"], 0, 128)
-                    if c: p["pitch_range"] = v; track_changed = True
-
-                c, v = imgui.SliderInt(ctx, "Silence Proportion (0=Any)", p["silence_proportion"], 0, 10)
-                if c: p["silence_proportion"] = v; track_changed = True
-
-                if is_drum is not True:
-                    c, v = imgui.SliderInt(ctx, "Pitch Class Set Size (0=Any)", p["pitch_class_set"], 0, 13)
-                    if c: p["pitch_class_set"] = v; track_changed = True
-
-            if model_type == "expressive":
-                c, v = imgui.Combo(ctx, "Quantization Grid Depth (NOMML)", p["nomml"], "\0".join(NOMML_LABELS) + "\0")
-                if c: p["nomml"] = v; track_changed = True
-
-            pc = _draw_pitch_remix_controls(p)
-            if pc:
-                track_changed = True
-
-        imgui.PopID(ctx)
-
-        if track_changed:
-            track_params[guid] = p
-            changed = True
+                if _draw_track_strip_body(p, is_drum):
+                    track_params[guid] = p
+                    changed = True
+            finally:
+                imgui.EndChild(ctx)
+            imgui.PopID(ctx)
+    finally:
+        imgui.EndChild(ctx)
 
     return changed, clicked
 
@@ -1006,7 +1100,14 @@ def loop():
     is_open = True
 
     try:
-        imgui.SetNextWindowSize(ctx, 560, 1050, imgui.Cond_FirstUseEver())
+        # 900x700, not the old 560x1050 -- 1050px tall opened taller than
+        # most laptop screens' usable height on first-ever launch, and
+        # since ReaImGui persists geometry after that, the resize handle
+        # needed to shrink it back down could end up off-screen with
+        # nothing to grab. Wider instead of taller fits the tabbed/
+        # 2-column layout better anyway (see draw_global_options/
+        # draw_track_controls).
+        imgui.SetNextWindowSize(ctx, 900, 700, imgui.Cond_FirstUseEver())
         # This ReaImGui build persists window geometry across script runs,
         # and Cond_FirstUseEver never re-applies once that saved state
         # exists. If the window is ever dragged down to (near) zero height,
@@ -1016,7 +1117,7 @@ def loop():
         # one-time reset can't undo a state that's re-saved degenerate on
         # every crash. Collapsing is left enabled; visible=False already
         # skips drawing safely below.
-        imgui.SetNextWindowSizeConstraints(ctx, 400, 300, 100000, 100000)
+        imgui.SetNextWindowSizeConstraints(ctx, 500, 300, 100000, 100000)
         visible, is_open = imgui.Begin(ctx, "MIDI-GPT Dashboard", True)
 
         if visible:
@@ -1053,18 +1154,47 @@ def loop():
 
                 imgui.BeginChild(ctx, "##main_content", 0, content_h)
                 try:
-                    imgui.SeparatorText(ctx, "Actions")
-                    clicked = draw_actions()
-                    gen_clicked = draw_generation_result()
-                    if gen_clicked:
-                        clicked = gen_clicked
+                    # Generate / Tracks / Setup instead of one long stacked
+                    # column -- Generate (Global Options + Run Infill +
+                    # progress) is what's touched every run and is the tab
+                    # that opens by default; Tracks (the mixer strips) and
+                    # Setup (server/model/instrument provisioning, rarely
+                    # touched once configured) are one click away instead of
+                    # competing for the same vertical space.
+                    if imgui.BeginTabBar(ctx, "##main_tabs"):
+                        try:
+                            tab_open, _ = imgui.BeginTabItem(ctx, "Generate")
+                            if tab_open:
+                                try:
+                                    if imgui.Button(ctx, "Run Infill", -1, 32):
+                                        clicked = "run_infill"
+                                    gen_clicked = draw_generation_result()
+                                    if gen_clicked:
+                                        clicked = gen_clicked
+                                    imgui.Spacing(ctx)
+                                    need_save_global = draw_global_options(params)
+                                finally:
+                                    imgui.EndTabItem(ctx)
 
-                    need_save_global = draw_global_options(params)
+                            tab_open, _ = imgui.BeginTabItem(ctx, "Tracks")
+                            if tab_open:
+                                try:
+                                    need_save_track, track_clicked = draw_track_controls(track_params)
+                                    if track_clicked:
+                                        clicked = track_clicked
+                                finally:
+                                    imgui.EndTabItem(ctx)
 
-                    imgui.SeparatorText(ctx, "Track Controls")
-                    need_save_track, track_clicked = draw_track_controls(track_params)
-                    if track_clicked:
-                        clicked = track_clicked
+                            tab_open, _ = imgui.BeginTabItem(ctx, "Setup")
+                            if tab_open:
+                                try:
+                                    setup_clicked = draw_setup_tab()
+                                    if setup_clicked:
+                                        clicked = setup_clicked
+                                finally:
+                                    imgui.EndTabItem(ctx)
+                        finally:
+                            imgui.EndTabBar(ctx)
                 finally:
                     imgui.EndChild(ctx)
 
