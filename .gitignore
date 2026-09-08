@@ -27,6 +27,7 @@ src/Scripts/composers_assistant_v2/models_permuted_labels/
 /tmp
 
 # Dev / CI artifacts
+*.log
 .claude/
 .dockerignore
 .pytest_cache/

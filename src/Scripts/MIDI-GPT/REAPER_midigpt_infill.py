@@ -43,6 +43,23 @@ def get_server_url():
     url = (url or "").strip()
     return url.rstrip("/") if url else DEFAULT_SERVER_URL
 
+def set_server_url(url):
+    """Persists the MIDI-GPT server URL, normalizing a bare host:port into
+    a full http:// URL and stripping any trailing slash -- same
+    normalization REAPER_midigpt_set_server.py's dialog already applies.
+    Returns the normalized URL, or None if given nothing to save (an empty
+    field commits nothing rather than clearing back to the default).
+    A plain ExtState write, not a blocking call, so callers may run this
+    directly inside an ImGui frame (see set_selected_model above)."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    if "://" not in url:
+        url = f"http://{url}"
+    url = url.rstrip("/")
+    RPR_SetExtState(EXT_STATE_SECTION, EXT_STATE_KEY, url, True)
+    return url
+
 def get_selected_model():
     """Model id to request, chosen via the dashboard's Model dropdown
     (persisted in REAPER's ExtState). Empty string means "let the server
