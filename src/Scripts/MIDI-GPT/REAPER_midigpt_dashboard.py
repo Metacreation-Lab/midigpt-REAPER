@@ -28,6 +28,7 @@ REAPER extension (Extensions > ReaPack > Browse packages > search
 """
 
 import sys
+import os
 import json
 
 from reaper_python import *
@@ -41,9 +42,42 @@ import imgui
 # them here doesn't trigger anything on its own.
 import REAPER_midigpt_infill as infill
 import REAPER_midigpt_setup_tracks as setup_tracks
-import REAPER_midigpt_set_server as set_server
 import REAPER_midigpt_set_soundfont_template as set_soundfont_template
 import REAPER_midigpt_apply_soundfont_template as apply_soundfont_template
+
+# ---------------------------------------------------------------------------
+# Theme -- every color used anywhere in this dashboard is named here, as
+# 0xRRGGBBAA. push_theme() (below) maps these onto ImGui's own style slots;
+# every other TextColored()/PushStyleColor() call in the file (the MIDI-GPT
+# wordmark/logo, per-track Ignored/Autoregressive status, warning/error
+# text) references these same named constants instead of its own hardcoded
+# hex. Retheming the whole dashboard -- including those ad hoc call sites,
+# not just the base ImGui palette -- is always just editing the values in
+# this one block.
+# ---------------------------------------------------------------------------
+
+THEME_BG = 0x1A0A0AFF               # WindowBg, PopupBg, ScrollbarBg
+THEME_BG_CHILD = 0x140808FF         # ChildBg
+THEME_BG_TITLE = 0x220C0CFF         # TitleBg
+THEME_BG_TITLE_ACTIVE = 0x4D1414FF
+THEME_BG_SURFACE = 0x3D1414FF       # Header (a collapsed section's own row)
+THEME_BG_FRAME = 0x2A1010FF         # FrameBg -- sliders/combos/inputs at rest
+THEME_BG_FRAME_HOVER = 0x3D1717FF
+THEME_BG_FRAME_ACTIVE = 0x4D1C1CFF
+
+THEME_ACCENT_DIM = 0x5C1C1CFF       # borders, separators, buttons/scrollbar at rest
+THEME_ACCENT_HOVER = 0x7A2424FF     # hovered state for the above
+THEME_ACCENT_ACTIVE = 0x992E2EFF    # pressed/active state for the above
+THEME_ACCENT = 0xE63946FF           # primary accent -- checkmarks, logo/wordmark
+THEME_ACCENT_DEEP = 0xCC3333FF      # SliderGrab at rest
+THEME_ACCENT_BRIGHT = 0xE64545FF    # SliderGrabActive, SeparatorActive, and the
+                                     # brightest highlight available -- used for
+                                     # an Autoregressive track's header text
+
+THEME_TEXT = 0xEDEDEDFF             # normal text
+THEME_TEXT_MUTED = 0x808080FF       # de-emphasized -- an Ignored track's header text
+THEME_WARNING = 0xFFAA33FF          # non-fatal status (generation still running, etc)
+THEME_ERROR = 0xFF6666FF            # truncated/failed
 
 # ---------------------------------------------------------------------------
 # Config
@@ -73,17 +107,94 @@ DEFAULT_GLOBAL_PARAMS = {
 
 CHECKS_LABELS = ["None", "Novelty Only", "Silence Only", "Both"]
 MAX_LOG_LINES = 500
-# Preferred height of the console+logo row when there's enough window
-# height to go around, and the main content area's (Actions/Options/Track
-# Controls) preferred minimum before the console starts giving up height.
-# Both are just preferences, not guarantees -- see the sizing math in
-# loop() for why they're never allowed to sum past what's available.
-CONSOLE_ROW_HEIGHT = 200
-MIN_CONTENT_HEIGHT = 250
+
+# Fixed height of the console row -- always shown, this exact size,
+# regardless of window size. No collapsing, no popout window, no button:
+# just a plain read-only text box (see draw_console()). Simple on purpose
+# -- a flexible/collapsing console was, on two separate occasions, the
+# actual cause of a residual vertical scrollbar on the main window that
+# survived several rounds of fixing the surrounding layout math instead.
+CONSOLE_ROW_HEIGHT = 130
+
+# Setup never gets compressed below its own comfortable height as the
+# window shrinks, and Generate/Tracks never gets compressed below this --
+# their controls would otherwise get squeezed to the point of looking (or
+# being) broken. Extra window height beyond this combined floor (plus the
+# fixed CONSOLE_ROW_HEIGHT) all goes to Generate/Tracks, which has no
+# ceiling of its own. This means the window's own enforced minimum height
+# (see SetNextWindowSizeConstraints in loop()) MUST stay tall enough that
+# the real remaining height can never drop below Setup's own height (see
+# SETUP_ROW_COUNT) + this + CONSOLE_ROW_HEIGHT, or Generate/Tracks would
+# be asked for less height than they need -- the same class of overflow
+# corruption the ##strip_body fix (see draw_track_controls) addresses one
+# level down.
+CONTENT_MIN_HEIGHT = 320.0
+
+# Estimated window chrome (title bar + outer window padding) NOT included
+# in imgui.GetContentRegionAvail(ctx). Only used as measured_window_chrome_h's
+# one-frame fallback in loop() (see that global's comment) -- every frame
+# after the first uses the real value, GetWindowHeight(ctx) minus
+# GetContentRegionAvail(ctx)'s height, instead of this guess.
+WINDOW_CHROME_ESTIMATE = 50.0
+
+# Below this window width, loop() switches from the normal "2x2" layout
+# (banner+setup share a row, generate+tracks share the next) to a "4x1"
+# layout -- banner, setup, generate, and tracks each stacked full-width,
+# one per row -- since side-by-side stops being usable much narrower than
+# this. A drawing-mode breakpoint only -- NOT a resize floor (see
+# MIN_WINDOW_WIDTH below for why it can't also be one).
+NARROW_LAYOUT_WIDTH = 700.0
+
+# The window's actual (and only) width floor, in both layouts. This can't
+# switch to something bigger in "wide" mode the way min height switches
+# per-mode -- if the floor were NARROW_LAYOUT_WIDTH while wide, the window
+# could never be dragged narrower than that floor in the first place, so
+# it could never actually cross the breakpoint into "narrow" mode: a
+# permanent deadlock, since the resize itself always stays clamped to
+# whatever floor is currently set.
+MIN_WINDOW_WIDTH = 380.0
+
+# Window max height is just this multiple of whatever the min height for
+# the current layout works out to -- a placeholder ratio, easy to retune
+# once the narrow layout's actually being used day to day.
+HEIGHT_MAX_MULTIPLIER = 1.5
+
+# Preferred width of the Generate panel (left column) -- the Tracks mixer
+# to its right gets whatever's left, since that one actually wants it (see
+# draw_track_controls). Falls back to 40% of the available width instead
+# on a narrow window rather than leaving the mixer with no room at all.
+# Raised from 380 -- that width left every 2-column Global Options label
+# clipped (a 2-column row needs roughly 2x(longest label + a usable
+# slider), and several labels here run 30+ characters; see _slider_grid).
+GENERATE_PANEL_WIDTH = 460.0
+
+# Setup's row height (MIDI-GPT wordmark to the left, server/model/
+# instrument-provisioning controls to its right) needs an explicit number,
+# not just "whatever its content needs", since draw_banner() has to know a
+# row_h to center the wordmark within, and getting it wrong either clips
+# content or leaves a visible gap below the row. draw_setup_panel is
+# exactly SETUP_ROW_COUNT widget rows tall (Server, Model, and two rows of
+# buttons) -- computed live in loop() via
+# imgui.GetFrameHeightWithSpacing(ctx) * SETUP_ROW_COUNT rather than a
+# hardcoded pixel guess, which was measurably wrong (left a gap under
+# Setup at the guessed height). Also used as the floor draw_setup_panel
+# must never need its own internal scrollbar for -- letting it scroll
+# internally would overflow this fixed-height child, corrupting this
+# ReaImGui build's window stack the same way an unbounded track strip did
+# (see the ##strip_body comment in draw_track_controls).
+SETUP_ROW_COUNT = 4
+
+# Width of the MIDI-GPT wordmark's child next to Setup -- wide enough for
+# MGPT_BANNER's longest line at MGPT_BANNER_FONT_SIZE with margin to spare;
+# extra width is just harmless centered padding. Shrunk alongside
+# MGPT_BANNER_FONT_SIZE (see that constant) so Setup's own controls still
+# have room to fit horizontally at the window's minimum width.
+BANNER_CHILD_WIDTH = 340.0
 
 TRACK_PARAMS_KEY = "track_params_v1"
 
 DEFAULT_TRACK_PARAMS = {
+    "collapsed":            0,
     "density":              0,
     "min_polyphony_q":      0,
     "max_polyphony_q":      0,
@@ -127,13 +238,11 @@ NOMML_LABELS = [
     "11 (Finest)", "Expressive",
 ]
 
-MODEL_TYPES = ["yellow", "prism", "expressive"]
-MODEL_LABELS = {"yellow": "Yellow", "prism": "Prism", "expressive": "Expressive"}
-
-# MIDI-GPT wordmark banner across the top of the window. Fixed font size and
-# height regardless of window size -- only its horizontal centering moves as
-# the window is resized. Uses \uXXXX escapes (box-drawing characters aren't
-# ASCII) for the same reason LOGO's comment below explains.
+# MIDI-GPT wordmark, shown next to Setup. Fixed font size regardless of
+# window size. \uXXXX-escaped (box-drawing characters aren't ASCII) rather
+# than a raw byte, since REAPER's embedded Python interpreter reads script
+# files as ASCII regardless of a "# -*- coding: utf-8 -*-" header, and a
+# raw non-ASCII byte in the source crashes with UnicodeDecodeError.
 MGPT_BANNER = (
     "\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2557      \u2588\u2588\u2588\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2588\u2588\u2557              \u2588\u2588\u2588\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\n"
     "\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2551      \u2588\u2588\u2554\u2550\u2550\u2550\u255d   \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557  \u255a\u2550\u2588\u2588\u2554\u255d             \u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d   \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557 \u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d\n"
@@ -143,84 +252,82 @@ MGPT_BANNER = (
     "\u255a\u2550\u255d     \u255a\u2550\u255d  \u2588\u2588\u2588\u2588\u2588\u2588\u2551       \u255a\u2550\u2550\u2550\u2550\u2550\u255d   \u255a\u2550\u2550\u2550\u2550\u255d              \u255a\u2550\u2550\u2550\u2550\u2550\u255d   \u255a\u2550\u255d         \u255a\u2550\u255d   \n"
     "             \u255a\u2588\u2588\u2588\u2588\u2588\u2554\u255d"
 )
-MGPT_BANNER_FONT_SIZE = 7.5
-
-# Metacreation Lab logo, shown next to the console. Pure ASCII (unlike the
-# old banner's box-drawing characters) so it doesn't need \uXXXX escaping --
-# REAPER's embedded Python interpreter reads script files as ASCII regardless
-# of a "# -*- coding: utf-8 -*-" header, and raw non-ASCII bytes in the
-# source crash with UnicodeDecodeError.
-LOGO = (
-    "                                                                             \n"
-    "                           :==::.                                            \n"
-    "                         :====%#+%=                                          \n"
-    "                       :=+==%%*@@@#%=                                        \n"
-    "                      -*++#%*@@@@@@@#%:                                      \n"
-    "                        .:-=@@@@@@@@@@#%:                                    \n"
-    "                           ::*@@@@@@@@@%%%.                                  \n"
-    "                            .:-*@@@@@@@@@%%*.                                \n"
-    "                              .:=#@@@@@@@@@%%+.                              \n"
-    "                                .:=%@@@@@@@@@#%=                             \n"
-    "                                  .-=%@@@@@@@@@*%:                           \n"
-    "                        -+=:.       .-*@@@@@@@@@@#%.                         \n"
-    "                      :++++#@-=:      :-*@@@@@@@@@%#%.                       \n"
-    "                    :++++*@+#@@*=:      .:*@@@@@@@@@%%*.                     \n"
-    "                  :++++*%**@@@@@%*=.      :-#@@@@@@@@@%%*.                   \n"
-    "                :++++*@%*@@@@@@@@@%=.       :=%@@@@@@@@@%%=                  \n"
-    "              .=+++*%%+@@@@@@@@@%+:           :=%@@@@@@@@@#%=                \n"
-    "            .=++++%%*%@@@@@@@@%+-               :=%@@@@@@@@@#%:              \n"
-    "          .=++++#@*%@@@@@@@@%+-                  .:+%@@@@@@@@%##:            \n"
-    "        .-+*+*#@*%@@@@@@@@%*-.                     .:*%@@@@@@@@%**:          \n"
-    "        .:+**@*#@@@@@@@@%*=.                      :::::*@@@@@@@@@%**.        \n"
-    "            ::#@@@@@@@@@#=:                     :==:::#+*@@@@@@@@@#:.        \n"
-    "             .:=%@@@@@@@@%#*-                 .=----*%*@@@@@@@@@%-.          \n"
-    "               .:+%@@@@@@@@%**:             .-----*%*%@@@@@@@@%=:            \n"
-    "                 .:+%@@@@@@@@%**:         .:--::+%*%@@@@@@@@%=:              \n"
-    "                   .:*%@@@@@@@@%*+.     .:--::=@*%@@@@@@@@%+:                \n"
-    "                     .:*@@@@@@@@@%*=   :-:::=@*%@@@@@@@@@*:                  \n"
-    "                       .-*@@@@@@@%=: :-:::-%##@@@@@@@@@*:.                   \n"
-    "                         .-#@@@%+:.:::::-##*%@@@@@@@@#-.                     \n"
-    "                          ..=%*: .:.  :+%+%@@@@@@@@%=.                       \n"
-    "                            .:..-.  .-#=%@@@@@@@@%=.                         \n"
-    "                              =:...:#=%@@@@@@@@@=:                           \n"
-    "                            ====::#+#@@@@@@@@@+:                             \n"
-    "                          -++++*@**@@@@@@@@@*:.                              \n"
-    "                        -++++*%#*%@@@@@@@@*:.                                \n"
-    "                      :*+++*%%*%@@@@@@@@#:.                                  \n"
-    "                       :=*%@+%@@@@@@@@%:.                                    \n"
-    "                         .:-%@@@@@@%%=.                                      \n"
-    "                           .:+%@@%%=:                                        \n"
-    "                             .:*%+:                                          \n"
-    "                               ..                                            \n"
-)
-LOGO_FONT_SIZE = 2.8
-LOGO_CHILD_WIDTH = 160.0
-LOGO_COLOR = 0xE63946FF
+# Shrunk from 7.5 -- that size was picked back when this wordmark spanned
+# the full window width on its own row; sharing a row with Setup now, it
+# needs to be small enough that Setup's controls still fit horizontally
+# even at the window's minimum width (see BANNER_CHILD_WIDTH above).
+MGPT_BANNER_FONT_SIZE = 5.5
 
 # ---------------------------------------------------------------------------
-# Console: writes only to the in-window scrolling log, not REAPER's native
-# console, since this dashboard has its own dedicated console area -- no
-# need to alt-tab out to see what happened. Set *after* importing the
-# action modules above (each of which sets its own sys.stdout at import
-# time) so this one wins for everything printed from here on, regardless
-# of which module's function is actually running.
+# Console: writes to both the in-window scrolling log (log_lines, read by
+# draw_console below) and a plain log file on disk (LOG_FILE_PATH) -- the
+# file survives even if the window's never opened or the console section
+# is scrolled away from, the in-window log means no alt-tabbing out to
+# read it day to day. Set *after* importing the action modules above (each
+# of which sets its own sys.stdout at import time) so this one wins for
+# everything printed from here on, regardless of which module's function
+# is actually running.
 # ---------------------------------------------------------------------------
 
 log_lines = []
 
+# The real, measured height of a "Console"-style SeparatorText row --
+# GetCursorPosY() before and after the actual call in loop() (see below),
+# not a formula. SeparatorText draws a rule plus text with its own extra
+# padding on top of a plain text line, so approximating it via
+# GetTextLineHeightWithSpacing() (as earlier rounds did) structurally
+# undercounts it -- which is what kept causing a residual scrollbar no
+# matter how many *other* spacing terms got fixed. None until the first
+# frame finishes; loop() falls back to the old (undercounting, but safe
+# to use for exactly one frame) estimate only for that first call.
+measured_console_header_h = None
+
+# Same idea, for the window's own chrome (title bar + top/bottom
+# WindowPadding): GetWindowHeight() minus GetContentRegionAvail()'s height,
+# read right after Begin() -- the actual overhead ImGui reserves outside
+# the content area, not the WINDOW_CHROME_ESTIMATE guess. That guess is
+# this cache's one-frame fallback (used the first time a given window size
+# is ever seen, before Begin() has run once to measure it).
+measured_window_chrome_h = None
+
+# The window's actual width, read fresh after Begin() each frame (see
+# loop()) and cached here purely so the NEXT frame's pre-Begin
+# SetNextWindowSizeConstraints call (which needs to know the layout mode
+# before Begin() has even run) can decide between the normal "2x2"
+# (banner+setup one row, generate+tracks the next) and the "4x1" narrow
+# layout (all four stacked full-width) a frame ahead of time. One frame of
+# lag on the mode switch is harmless -- same reasoning as the other
+# measured_* caches above.
+last_window_w = None
+
+# __file__ isn't an option -- REAPER's embedded Python doesn't set it when
+# executing a ReaScript (NameError). RPR_GetResourcePath() (already used
+# above for the ReaImGui API path) is the reliable way to locate this
+# script's own folder instead: same Scripts/MIDI-GPT directory this file
+# and its sibling actions live in, via REAPER's own resource-path API
+# rather than Python's normal script-introspection machinery, which
+# ReaScript doesn't support.
+LOG_FILE_PATH = RPR_GetResourcePath() + "/Scripts/MIDI-GPT/midigpt-dashboard.log"
+
 class _DashboardConsole:
-    def __init__(self):
+    """Writes to LOG_FILE_PATH (opened once, line-buffered, so a write()
+    doesn't pay an open/close per call but still lands on disk promptly)
+    and appends completed lines to log_lines for draw_console below."""
+    def __init__(self, path):
+        self._file = open(path, "a", encoding="utf-8", buffering=1)
         self._buf = ""
     def write(self, s):
+        self._file.write(s)
         self._buf += s
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
             log_lines.append(line)
         del log_lines[:-MAX_LOG_LINES]
     def flush(self):
-        pass
+        self._file.flush()
 
-sys.stdout = sys.stderr = _DashboardConsole()
+sys.stdout = sys.stderr = _DashboardConsole(LOG_FILE_PATH)
+print(f"\n=== MIDI-GPT Dashboard started ===\n")
 
 # ---------------------------------------------------------------------------
 # Global Options persistence
@@ -283,7 +390,7 @@ server_scale_presets = ["chromatic", "major", "natural_minor", "harmonic_minor",
 
 # Available checkpoints from GET /models, and the one to request from
 # /generate (persisted via infill.set_selected_model()/ExtState). The
-# picker in draw_actions() stays hidden until available_models is
+# picker in draw_setup_panel() stays hidden until available_models is
 # non-empty -- i.e. until the server has actually been reached and /models
 # has answered at least once, per the "only once the server is active"
 # requirement. "" for selected_model means "use the server's own
@@ -291,6 +398,13 @@ server_scale_presets = ["chromatic", "major", "natural_minor", "harmonic_minor",
 # with before the user has ever picked anything.
 available_models = []
 selected_model = ""
+
+# Live edit buffer for the Setup panel's server-address field -- None until
+# first drawn, at which point it's seeded from infill.get_server_url() (see
+# draw_setup_panel). Kept separate from that getter's return value so typing
+# a new address doesn't get stomped by ExtState on every frame; only
+# InputTextFlags_EnterReturnsTrue committing it writes ExtState back.
+server_url_input = None
 
 def refresh_model_type():
     """Detects the active model's architecture (Yellow/Prism/Expressive)
@@ -407,7 +521,6 @@ def reset_all_settings():
     print("Reset Global Options and Track Controls to defaults. Track instrument/SoundFont setup was left untouched.\n")
 
 ACTIONS = {
-    "set_server":              set_server.run_set_server,
     "setup_tracks":            setup_tracks.run_setup_tracks,
     "set_soundfont_template":  set_soundfont_template.run_set_soundfont_template,
     "apply_soundfont_template": apply_soundfont_template.run_apply_soundfont_template,
@@ -416,22 +529,49 @@ ACTIONS = {
     "reset_all":               reset_all_settings,
 }
 
-def draw_actions():
-    """Draws the action buttons. Returns the key of whichever ACTIONS entry
-    was clicked this frame, or None. Callers must NOT invoke it here --
-    these can be slow (HTTP, generation) or open native modal dialogs, and
-    doing that mid-frame (between Begin/End) can cause REAPER to repaint
-    with a half-built widget tree, corrupting ReaImGui's internal state.
-    Run the returned action only after imgui.End() has closed the frame."""
+def draw_setup_panel():
+    """One-time-per-project setup: server address, model picker, track/
+    instrument provisioning, and reset. These are rarely touched once
+    configured, unlike Global Options/Track Controls which get used every
+    generation -- kept in their own compact bar above the Generate/Tracks
+    panels so they don't compete for space or visual weight with what you
+    actually touch every run. Returns the key of whichever ACTIONS entry
+    was clicked this frame, or None.
+    Callers must NOT invoke it here -- these can be slow (HTTP, generation)
+    or open native modal dialogs, and doing that mid-frame (between
+    Begin/End) can cause REAPER to repaint with a half-built widget tree,
+    corrupting ReaImGui's internal state. Run the returned action only
+    after imgui.End() has closed the frame."""
     clicked = None
 
-    global selected_model
+    global selected_model, server_url_input
 
-    server_url = infill.get_server_url()
-    imgui.Text(ctx, f"Server: {server_url}")
+    if server_url_input is None:
+        server_url_input = infill.get_server_url()
+
+    imgui.Text(ctx, "Server:")
     imgui.SameLine(ctx)
-    if imgui.Button(ctx, "Change...##server"):
-        clicked = "set_server"
+    imgui.SetNextItemWidth(ctx, 240)
+    # EnterReturnsTrue -- commit on Enter, not on every keystroke, so a
+    # partially-typed URL never gets written to ExtState (and infill.py
+    # never tries to hit a half-typed address mid-edit). infill.set_server_url
+    # is a plain ExtState write (not a blocking call), so it's safe to run
+    # right here rather than through the click-after-End() mechanism this
+    # docstring otherwise requires -- same reasoning as set_selected_model
+    # below.
+    enter, server_url_input = imgui.InputTextWithHint(
+        ctx, "##server_url", "http://127.0.0.1:3456", server_url_input,
+        imgui.InputTextFlags_EnterReturnsTrue())
+    if enter:
+        normalized = infill.set_server_url(server_url_input)
+        if normalized:
+            server_url_input = normalized
+            # Re-detect model_type/capabilities/list against whatever
+            # server was just pointed at -- otherwise the model picker
+            # keeps showing the old server's data until the user notices
+            # and clicks 'Refresh##model' themselves. Deferred (unlike the
+            # ExtState write above) since it's a blocking HTTP call.
+            clicked = "refresh_model"
 
     # Hidden until refresh_model_type() has successfully reached GET
     # /models at least once -- no point offering a picker backed by a
@@ -451,21 +591,26 @@ def draw_actions():
     else:
         imgui.TextDisabled(ctx, "Model: (checking server...)")
 
+    # No section headers here (Tracks && Instruments / Reset used to each
+    # get their own SeparatorText) -- this whole panel now shares its row
+    # with the banner instead of having the full window width to itself,
+    # and labels plus long button text were what didn't fit. Two rows of
+    # two shortened buttons instead of three-then-one keeps every row's
+    # width well under what even the smallest allowed window can no longer
+    # spare (see BANNER_CHILD_WIDTH). Also, this panel is exactly
+    # SETUP_ROW_COUNT widget rows tall (Server, Model, two button rows) --
+    # keep that constant in sync if a row is ever added/removed here, since
+    # loop() uses it to size this panel's row.
     if imgui.Button(ctx, "Setup Tracks"):
         clicked = "setup_tracks"
-
     imgui.SameLine(ctx)
-    if imgui.Button(ctx, "Use Selected Track as SoundFont Template"):
+    if imgui.Button(ctx, "Set SoundFont Template"):
         clicked = "set_soundfont_template"
 
-    imgui.SameLine(ctx)
-    if imgui.Button(ctx, "Apply Template to Selected Tracks"):
+    if imgui.Button(ctx, "Apply Template"):
         clicked = "apply_soundfont_template"
-
-    if imgui.Button(ctx, "Run Infill", -1, 32):
-        clicked = "run_infill"
-
-    if imgui.Button(ctx, "Reset Global Options && Track Controls"):
+    imgui.SameLine(ctx)
+    if imgui.Button(ctx, "Reset Controls"):
         clicked = "reset_all"
 
     return clicked
@@ -482,7 +627,7 @@ def draw_generation_result():
     (seed, token/context usage, speed) plus, for a batch (num_candidates>1)
     result, the candidate swap buttons. Returns the clicked action key
     ("cancel_generation" or "batch_select_N"), or None -- callers must NOT
-    act on it here (see draw_actions()'s docstring for why)."""
+    act on it here (see draw_setup_panel()'s docstring for why)."""
     if active_generation is not None:
         handle = active_generation["handle"]
         with handle.lock:
@@ -519,7 +664,7 @@ def draw_generation_result():
         imgui.Text(ctx, f"    Time: {elapsed:.2f}s")
     if status and status != "completed":
         imgui.SameLine(ctx)
-        imgui.TextColored(ctx, _signed32(0xFFAA33FF), f"    [{status}]")
+        imgui.TextColored(ctx, _signed32(THEME_WARNING), f"    [{status}]")
 
     ctx_tok = tokens.get("context_tokens")
     gen_tok = tokens.get("generated_tokens")
@@ -542,7 +687,7 @@ def draw_generation_result():
         imgui.Text(ctx, f"Speed: {tps:.1f} tokens/sec")
 
     if tokens.get("truncated"):
-        imgui.TextColored(ctx, _signed32(0xFF6666FF),
+        imgui.TextColored(ctx, _signed32(THEME_ERROR),
                            "Truncated -- hit the context ceiling before finishing (may be cut off mid-bar)")
 
     clicked = None
@@ -551,8 +696,16 @@ def draw_generation_result():
         imgui.SeparatorText(ctx, "Batch Candidates")
         imgui.TextDisabled(ctx, "Swap freely and listen -- the next generation makes your pick permanent.")
         selected = active_batch.get("selected") if active_batch else last_generation_result.get("selected_index")
+        # Wrapped to however many 28px buttons actually fit per row instead
+        # of one long SameLine chain -- up to 16 candidates (Sampling's
+        # Batch Candidates slider) never fit in one row at the Generate
+        # panel's actual width, overflowing it horizontally.
+        batch_button_size = 28.0
+        item_spacing_x = imgui.GetStyleVar(ctx, imgui.StyleVar_ItemSpacing())[0]
+        avail_w, _ = imgui.GetContentRegionAvail(ctx)
+        per_row = max(1, int((avail_w + item_spacing_x) / (batch_button_size + item_spacing_x)))
         for i, cand in enumerate(candidates):
-            if i > 0:
+            if i > 0 and i % per_row != 0:
                 imgui.SameLine(ctx)
             ok = cand.get("score") is not None
             if not ok:
@@ -580,80 +733,162 @@ def draw_generation_result():
 # UI: Global Options
 # ---------------------------------------------------------------------------
 
+def _table_slider_width(label):
+    """Item width that actually leaves room for `label` to render, computed
+    from the current column's real available width -- SetNextItemWidth(-1)
+    (fill everything up to the edge) was the bug that made every Global
+    Options slider's label disappear: -1 hands the *entire* column to the
+    widget, so the label -- which Dear ImGui draws immediately after the
+    widget on the same line -- has zero space left and never appears at
+    all. This reserves label_width + a small gap first, floored so even a
+    label wider than the column still leaves the slider itself usable
+    (the label may then clip at the column edge, which is a far smaller
+    problem than being invisible everywhere)."""
+    avail_w, _ = imgui.GetContentRegionAvail(ctx)
+    label_w, _ = imgui.CalcTextSize(ctx, label)
+    return max(60.0, avail_w - label_w - 8.0)
+
+def _slider_grid(table_id, rows, params, columns=2):
+    """Draws (label, key, kind, lo, hi[, fmt]) rows as SliderInt/SliderDouble
+    widgets `columns` to a line in a table -- 2 columns halves the vertical
+    space vs. one full-width slider per row, which is most of why the old
+    single-column Global Options section ran off the bottom of the window.
+    But 2 columns only works when the panel is wide enough for both a label
+    and a usable slider to share half of it -- pass columns=1 for a row set
+    with long labels (Sampling's "Anti-nucleus mask_p (0.0=Off)", e.g.)
+    that would otherwise just get clipped no matter how the slider width is
+    computed, since the label text alone doesn't fit in half the panel.
+    Returns True if any value changed this frame."""
+    changed = False
+    if not imgui.BeginTable(ctx, table_id, columns):
+        return False
+    try:
+        for i, row in enumerate(rows):
+            label, key, kind, lo, hi = row[:5]
+            fmt = row[5] if len(row) > 5 else "%.2f"
+            if i % columns == 0:
+                imgui.TableNextRow(ctx)
+            imgui.TableNextColumn(ctx)
+            imgui.SetNextItemWidth(ctx, _table_slider_width(label))
+            if kind == "int":
+                c, v = imgui.SliderInt(ctx, label, params[key], lo, hi)
+            else:
+                c, v = imgui.SliderDouble(ctx, label, params[key], lo, hi, fmt)
+            if c:
+                params[key] = v
+                changed = True
+    finally:
+        imgui.EndTable(ctx)
+    return changed
+
 def draw_global_options(params):
-    """Draws all Global Options controls. Returns True if any value changed
-    this frame (caller should persist)."""
+    """Draws Global Options grouped into collapsible sections instead of one
+    long always-expanded list. "Generation" (temperature/context/bars/
+    tracks-per-step) is what actually gets touched every run, so it starts
+    open; "Hard Limits"/"Sampling"/"Checks" are occasional/advanced tuning,
+    so they start collapsed -- one click away, but not eating vertical
+    space by default. Returns True if any value changed this frame (caller
+    should persist)."""
     changed = False
 
-    imgui.SeparatorText(ctx, "Generation")
+    if imgui.CollapsingHeader(ctx, "Generation", None, imgui.TreeNodeFlags_DefaultOpen())[0]:
+        # Bars Per Step's max tracks model_dim, which can shrink below a
+        # previously-saved value -- clamp for display the same way the
+        # single-column version did, without touching the saved value
+        # unless the user actually moves this slider.
+        #
+        # Single column, not a 2-column table -- same reasoning as Hard
+        # Limits/Sampling below: even these relatively short labels didn't
+        # leave enough room per column at the Generate panel's actual
+        # width, clipping them.
+        bars_per_step_display = min(params["bars_per_step"], params["model_dim"])
+        imgui.SetNextItemWidth(ctx, _table_slider_width("Temperature"))
+        c, v = imgui.SliderDouble(ctx, "Temperature", params["temperature"], 0.1, 3.0, "%.2f")
+        if c: params["temperature"] = v; changed = True
+        imgui.SetNextItemWidth(ctx, _table_slider_width("Context Size (Bars)"))
+        c, v = imgui.SliderInt(ctx, "Context Size (Bars)", params["model_dim"], 2, 16)
+        if c: params["model_dim"] = v; changed = True
+        imgui.SetNextItemWidth(ctx, _table_slider_width("Bars Per Step"))
+        c, v = imgui.SliderInt(ctx, "Bars Per Step", bars_per_step_display, 1, params["model_dim"])
+        if c: params["bars_per_step"] = v; changed = True
+        imgui.SetNextItemWidth(ctx, _table_slider_width("Tracks Per Step"))
+        c, v = imgui.SliderInt(ctx, "Tracks Per Step", params["tracks_per_step"], 1, 16)
+        if c: params["tracks_per_step"] = v; changed = True
 
-    c, v = imgui.SliderDouble(ctx, "Temperature", params["temperature"], 0.1, 3.0, "%.2f")
-    if c: params["temperature"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Context Size (Bars)", params["model_dim"], 2, 16)
-    if c: params["model_dim"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Bars Per Step", min(params["bars_per_step"], params["model_dim"]), 1, params["model_dim"])
-    if c: params["bars_per_step"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Tracks Per Step", params["tracks_per_step"], 1, 16)
-    if c: params["tracks_per_step"] = v; changed = True
-
-    imgui.SeparatorText(ctx, "Hard Limits")
-
-    c, v = imgui.SliderInt(ctx, "Polyphony Hard Limit (0=Off)", params["polyphony_hard_limit"], 0, 32)
-    if c: params["polyphony_hard_limit"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Density Hard Limit (0=Off)", params["density_hard_limit"], 0, 64)
-    if c: params["density_hard_limit"] = v; changed = True
-
-    imgui.SeparatorText(ctx, "Sampling")
-
-    c, v = imgui.SliderInt(ctx, "Max Attempts", params["max_attempts"], 1, 10)
-    if c: params["max_attempts"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Temp Escalation (1.0=Off)", params["temp_escalation"], 1.0, 3.0, "%.2f")
-    if c: params["temp_escalation"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Top-p (1.0=Off)", params["top_p"], 0.0, 1.0, "%.2f")
-    if c: params["top_p"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Top-k (0=Off)", params["top_k"], 0, 500)
-    if c: params["top_k"] = v; changed = True
-
-    c, v = imgui.SliderDouble(ctx, "Anti-nucleus mask_p (0.0=Off)", params["mask_p"], 0.0, 0.95, "%.2f")
-    if c: params["mask_p"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Anti-nucleus mask_k (0=Off)", params["mask_k"], 0, 100)
-    if c: params["mask_k"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Random Seed (-1=Random)", params["seed"], -1, 999999)
-    if c: params["seed"] = v; changed = True
-
-    c, v = imgui.SliderInt(ctx, "Batch Candidates (num_candidates)", params.get("num_candidates", 1), 1, 16)
-    if c: params["num_candidates"] = v; changed = True
-    if params.get("num_candidates", 1) > 1:
-        imgui.TextDisabled(ctx, "Token streaming is unavailable above 1 candidate -- each run waits for all of them.")
-
-    imgui.SeparatorText(ctx, "Checks")
-
-    checks_idx = params["checks_idx"]
-    for i, label in enumerate(CHECKS_LABELS):
-        c, checks_idx = imgui.RadioButtonEx(ctx, label, checks_idx, i)
-        if c:
-            params["checks_idx"] = checks_idx
+    if imgui.CollapsingHeader(ctx, "Hard Limits")[0]:
+        limit_rows = [
+            ("Polyphony Hard Limit (0=Off)", "polyphony_hard_limit", "int", 0, 32),
+            ("Density Hard Limit (0=Off)", "density_hard_limit", "int", 0, 64),
+        ]
+        # Single column -- these labels are long enough that 2 columns left
+        # them clipped no matter how the slider width was computed (see
+        # _slider_grid's docstring).
+        if _slider_grid("##limits_grid", limit_rows, params, columns=1):
             changed = True
-        if i < len(CHECKS_LABELS) - 1:
-            imgui.SameLine(ctx)
 
-    c, v = imgui.Checkbox(ctx, "Shuffle Steps", bool(params["shuffle"]))
-    if c: params["shuffle"] = int(v); changed = True
+    if imgui.CollapsingHeader(ctx, "Sampling")[0]:
+        sampling_rows = [
+            ("Max Attempts", "max_attempts", "int", 1, 10),
+            ("Temp Escalation (1.0=Off)", "temp_escalation", "double", 1.0, 3.0),
+            ("Top-p (1.0=Off)", "top_p", "double", 0.0, 1.0),
+            ("Top-k (0=Off)", "top_k", "int", 0, 500),
+            ("Anti-nucleus mask_p (0.0=Off)", "mask_p", "double", 0.0, 0.95),
+            ("Anti-nucleus mask_k (0=Off)", "mask_k", "int", 0, 100),
+            ("Random Seed (-1=Random)", "seed", "int", -1, 999999),
+            ("Batch Candidates", "num_candidates", "int", 1, 16),
+        ]
+        # Single column -- same reasoning as Hard Limits above; several of
+        # these labels are the longest in the whole panel.
+        if _slider_grid("##sampling_grid", sampling_rows, params, columns=1):
+            changed = True
+        if params.get("num_candidates", 1) > 1:
+            imgui.TextDisabled(ctx, "Token streaming is unavailable above 1 candidate -- each run waits for all of them.")
+
+    if imgui.CollapsingHeader(ctx, "Checks")[0]:
+        # Stacked vertically, not SameLine-chained -- four radio buttons in
+        # one row overflowed the Generate panel's actual width, forcing it
+        # to scroll horizontally to see the rest.
+        checks_idx = params["checks_idx"]
+        for i, label in enumerate(CHECKS_LABELS):
+            c, checks_idx = imgui.RadioButtonEx(ctx, label, checks_idx, i)
+            if c:
+                params["checks_idx"] = checks_idx
+                changed = True
+
+        c, v = imgui.Checkbox(ctx, "Shuffle Steps", bool(params["shuffle"]))
+        if c: params["shuffle"] = int(v); changed = True
 
     return changed
 
 # ---------------------------------------------------------------------------
 # UI: Per-Track Controls
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Strip-widget helpers -- label on its own line above a hidden-label,
+# full-width widget below it, rather than Dear ImGui's normal "widget, then
+# label on the same line". Left over from when this was a ~220px-wide
+# mixer channel strip (too narrow for a same-line label), but works fine
+# indented under a CollapsingHeader too, and TextWrapped still matters for
+# labels like "Pitch Class Set Size (0=Any)" if the window itself is
+# narrow. Change to a same-line label if this ever stops needing to
+# tolerate a narrow width at all.
+# ---------------------------------------------------------------------------
+
+def _strip_slider_int(label, value, lo, hi, id_suffix):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.SliderInt(ctx, f"##{id_suffix}", value, lo, hi)
+
+def _strip_slider_double(label, value, lo, hi, id_suffix, fmt="%.2f"):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.SliderDouble(ctx, f"##{id_suffix}", value, lo, hi, fmt)
+
+def _strip_combo(label, idx, items, id_suffix):
+    imgui.TextWrapped(ctx, label)
+    imgui.SetNextItemWidth(ctx, -1)
+    return imgui.Combo(ctx, f"##{id_suffix}", idx, "\0".join(items) + "\0")
 
 def _draw_pitch_remix_controls(p):
     """Pitch mask and remix (variation) controls for one track. Gated
@@ -665,85 +900,153 @@ def _draw_pitch_remix_controls(p):
     if server_capabilities.get("supports_pitch_mask"):
         imgui.SeparatorText(ctx, "Pitch Mask")
 
-        c, v = imgui.Combo(ctx, "Pitch Mask Mode", p["pitch_mask_mode"], "Off\0Scale\0Pitch Classes\0")
+        c, v = _strip_combo("Pitch Mask Mode", p["pitch_mask_mode"], ["Off", "Scale", "Pitch Classes"], "pmmode")
         if c: p["pitch_mask_mode"] = v; changed = True
 
         if p["pitch_mask_mode"] == 1:
-            c, v = imgui.Combo(ctx, "Root", p["pitch_mask_root"], "\0".join(NOTE_NAMES) + "\0")
+            c, v = _strip_combo("Root", p["pitch_mask_root"], NOTE_NAMES, "pmroot")
             if c: p["pitch_mask_root"] = v; changed = True
 
             scale_idx = server_scale_presets.index(p["pitch_mask_scale"]) if p["pitch_mask_scale"] in server_scale_presets else 0
-            c, scale_idx = imgui.Combo(ctx, "Scale", scale_idx, "\0".join(server_scale_presets) + "\0")
+            c, scale_idx = _strip_combo("Scale", scale_idx, server_scale_presets, "pmscale")
             if c: p["pitch_mask_scale"] = server_scale_presets[scale_idx]; changed = True
 
         elif p["pitch_mask_mode"] == 2:
-            imgui.Text(ctx, "Allowed pitch classes:")
-            for pcls in range(12):
-                bit = 1 << pcls
-                checked = bool(p["pitch_mask_classes"] & bit)
-                c, v = imgui.Checkbox(ctx, f"{NOTE_NAMES[pcls]}##pc{pcls}", checked)
-                if c:
-                    p["pitch_mask_classes"] = (p["pitch_mask_classes"] | bit) if v else (p["pitch_mask_classes"] & ~bit)
-                    changed = True
-                if pcls < 11:
-                    imgui.SameLine(ctx)
+            imgui.TextWrapped(ctx, "Allowed pitch classes:")
+            # 3 per row (not all 12 on one SameLine chain like the old
+            # full-width layout) -- 12 checkboxes-with-labels don't fit
+            # across a ~260px strip.
+            for row_start in range(0, 12, 3):
+                for pcls in range(row_start, min(row_start + 3, 12)):
+                    bit = 1 << pcls
+                    checked = bool(p["pitch_mask_classes"] & bit)
+                    c, v = imgui.Checkbox(ctx, f"{NOTE_NAMES[pcls]}##pc{pcls}", checked)
+                    if c:
+                        p["pitch_mask_classes"] = (p["pitch_mask_classes"] | bit) if v else (p["pitch_mask_classes"] & ~bit)
+                        changed = True
+                    if pcls < row_start + 2:
+                        imgui.SameLine(ctx)
 
         if p["pitch_mask_mode"] != 0:
-            c, v = imgui.Combo(ctx, "Soft Shape", p["pitch_shape_mode"], "Off\0Uniform Register\0Normal Register\0")
+            c, v = _strip_combo("Soft Shape", p["pitch_shape_mode"], ["Off", "Uniform Register", "Normal Register"], "pshape")
             if c: p["pitch_shape_mode"] = v; changed = True
 
             if p["pitch_shape_mode"] == 1:
-                c, v = imgui.SliderInt(ctx, "Shape Min Pitch", p["pitch_shape_min"], 0, 127)
+                c, v = _strip_slider_int("Shape Min Pitch", p["pitch_shape_min"], 0, 127, "shmin")
                 if c: p["pitch_shape_min"] = v; changed = True
-                c, v = imgui.SliderInt(ctx, "Shape Max Pitch", p["pitch_shape_max"], 0, 127)
+                c, v = _strip_slider_int("Shape Max Pitch", p["pitch_shape_max"], 0, 127, "shmax")
                 if c: p["pitch_shape_max"] = v; changed = True
             elif p["pitch_shape_mode"] == 2:
-                c, v = imgui.SliderInt(ctx, "Shape Mean Pitch", p["pitch_shape_mean"], 0, 127)
+                c, v = _strip_slider_int("Shape Mean Pitch", p["pitch_shape_mean"], 0, 127, "shmean")
                 if c: p["pitch_shape_mean"] = v; changed = True
-                c, v = imgui.SliderDouble(ctx, "Shape Std Dev", p["pitch_shape_std"], 0.5, 40.0, "%.1f")
+                c, v = _strip_slider_double("Shape Std Dev", p["pitch_shape_std"], 0.5, 40.0, "shstd", "%.1f")
                 if c: p["pitch_shape_std"] = v; changed = True
 
     if server_capabilities.get("supports_remix"):
         imgui.SeparatorText(ctx, "Variation (Remix)")
-        c, v = imgui.Checkbox(ctx, "Remix This Track's Bars", bool(p["remix_enabled"]))
+        c, v = imgui.Checkbox(ctx, "Remix This Track's Bars##remixon", bool(p["remix_enabled"]))
         if c: p["remix_enabled"] = int(v); changed = True
 
         if p["remix_enabled"]:
-            imgui.TextDisabled(ctx, "Regenerates the bars ALREADY on this track as a variation of what's there --")
-            imgui.TextDisabled(ctx, "Ignore/Autoregressive still decide which bars.")
-            c, v = imgui.SliderDouble(ctx, "Remix Amount", p["remix_amount"], 0.0, 1.0, "%.2f")
+            imgui.TextWrapped(ctx, "Regenerates the bars already here as a variation. Ignore/AR still decide which bars.")
+            c, v = _strip_slider_double("Remix Amount", p["remix_amount"], 0.0, 1.0, "remixamt")
             if c: p["remix_amount"] = v; changed = True
-            c, v = imgui.Combo(ctx, "Remix Mode", p["remix_mode"], "Pitch Only\0Pitch + Duration\0")
+            c, v = _strip_combo("Remix Mode", p["remix_mode"], ["Pitch Only", "Pitch + Duration"], "remixmode")
             if c: p["remix_mode"] = v; changed = True
 
     return changed
 
-def draw_track_controls(track_params):
-    """Draws the Model selector and one collapsible section per project
-    track. Returns (changed, clicked) -- changed is True if any per-track
-    value was edited this frame (caller should persist); clicked is set to
-    "refresh_model" if the Refresh button was pressed (run after End(), same
-    rule as draw_actions())."""
-    global model_type
+def _draw_track_strip_body(p, is_drum):
+    """Draws one track's full parameter set, stacked vertically top to
+    bottom within its strip (label above, hidden-label full-width widget
+    below -- see the strip-widget helpers above). Same fields and
+    drum/melodic/model_type gating as before, just laid out narrow-and-tall
+    instead of wide-and-collapsed. Mutates p in place; returns True if
+    anything changed this frame."""
     changed = False
-    clicked = None
 
-    imgui.Text(ctx, f"Model: {MODEL_LABELS.get(model_type, model_type)}")
-    imgui.SameLine(ctx)
-    if imgui.Button(ctx, "Refresh##model"):
-        clicked = "refresh_model"
-    imgui.SameLine(ctx)
-    imgui.SetNextItemWidth(ctx, 140)
-    idx = MODEL_TYPES.index(model_type) if model_type in MODEL_TYPES else 0
-    c, idx = imgui.Combo(ctx, "##model_override", idx, "\0".join(MODEL_LABELS[m] for m in MODEL_TYPES) + "\0")
-    if c:
-        model_type = MODEL_TYPES[idx]
+    c, v = imgui.Checkbox(ctx, "Ignore##ign", bool(p["ignore"]))
+    if c: p["ignore"] = int(v); changed = True
+    c, v = imgui.Checkbox(ctx, "Autoregressive##ar", bool(p["autoregressive"]))
+    if c: p["autoregressive"] = int(v); changed = True
+
+    if is_drum is None:
+        imgui.TextWrapped(ctx, "Instrument not detected -- showing all controls. Density=drum only, rest=melodic only.")
+
+    if is_drum is not False:
+        c, v = _strip_slider_int("Density (0=Any)", p["density"], 0, 10, "dens")
+        if c: p["density"] = v; changed = True
+
+    if is_drum is not True:
+        c, v = _strip_slider_int("Polyphony Min (0=Any)", p["min_polyphony_q"], 0, 10, "pmin")
+        if c: p["min_polyphony_q"] = v; changed = True
+
+        c, v = _strip_slider_int("Polyphony Max (0=Any)", p["max_polyphony_q"], 0, 10, "pmax")
+        if c: p["max_polyphony_q"] = v; changed = True
+
+        c, v = _strip_combo("Note Duration Min", p["min_note_duration_q"], NOTE_DURATION_LABELS, "ndmin")
+        if c: p["min_note_duration_q"] = v; changed = True
+
+        c, v = _strip_combo("Note Duration Max", p["max_note_duration_q"], NOTE_DURATION_LABELS, "ndmax")
+        if c: p["max_note_duration_q"] = v; changed = True
+
+    if model_type in ("prism", "expressive"):
+        if is_drum is not True:
+            c, v = _strip_combo("Key Signature", p["key_signature"], KEY_SIGNATURE_LABELS, "key")
+            if c: p["key_signature"] = v; changed = True
+
+            c, v = _strip_slider_int("Pitch Range (0=Any)", p["pitch_range"], 0, 128, "prange")
+            if c: p["pitch_range"] = v; changed = True
+
+        c, v = _strip_slider_int("Silence Proportion (0=Any)", p["silence_proportion"], 0, 10, "sil")
+        if c: p["silence_proportion"] = v; changed = True
+
+        if is_drum is not True:
+            c, v = _strip_slider_int("Pitch Class Set Size (0=Any)", p["pitch_class_set"], 0, 13, "pcset")
+            if c: p["pitch_class_set"] = v; changed = True
+
+    if model_type == "expressive":
+        c, v = _strip_combo("Quantization Grid Depth (NOMML)", p["nomml"], NOMML_LABELS, "nomml")
+        if c: p["nomml"] = v; changed = True
+
+    if _draw_pitch_remix_controls(p):
+        changed = True
+
+    return changed
+
+def draw_track_controls(track_params):
+    """Draws one collapsible section per project track, stacked vertically
+    -- a plain CollapsingHeader per track, full per-track controls
+    (density/polyphony/Ignore/Autoregressive/etc, from
+    _draw_track_strip_body) indented below when expanded. Returns True if
+    any per-track value was edited this frame (caller should persist).
+
+    Replaces an earlier horizontally-scrolling mixer-style layout (each
+    track its own fixed-width column) that went through several rounds of
+    both crashes -- a sibling child window per strip, then a scrolling
+    table, each corrupted this ReaImGui build's window stack in a
+    different way -- and layout bugs neither ever fully resolved. A plain
+    vertical list of collapsible sections needs none of that: it draws
+    straight into the caller's own "##tracks_panel" child (see loop()) --
+    that child is already scrollable on its own, so a second, separately-
+    scrollable child wrapped around this same content (an earlier version
+    of this function had one, "##tracks_list") bought nothing and was
+    exactly the kind of nested-scrolling-child arrangement that corrupts
+    this ReaImGui build's window stack once a real scrollbar drag hits it.
+
+    model_type (which per-track fields apply -- see _draw_track_strip_body)
+    comes entirely from Setup's checkpoint picker via refresh_model_type();
+    there's no override here, since a checkpoint only ever resolves to one
+    of the architectures this dashboard already knows how to draw controls
+    for."""
+    changed = False
 
     num_tracks = RPR_CountTracks(0)
     if num_tracks == 0:
         imgui.TextDisabled(ctx, "No tracks in this project yet.")
-        return changed, clicked
+        return changed
 
+    imgui.Spacing(ctx)
     for i in range(num_tracks):
         track = RPR_GetTrack(0, i)
         guid = get_track_guid(track)
@@ -766,134 +1069,99 @@ def draw_track_controls(track_params):
             instrument = setup_tracks.detect_track_instrument(track)
         is_drum = (instrument == 128) if instrument is not None else None
 
-        header = f"{i + 1}. {name}"
-        if p["ignore"]:
-            header += "  [Ignored]"
-        elif p["autoregressive"]:
-            header += "  [Autoregressive]"
+        # Combine the loop index with guid (not guid alone) -- a brand
+        # new track added this same session can transiently report an
+        # empty/not-yet-assigned GUID. A CollapsingHeader colliding
+        # with another on the same ID just means the two share
+        # open/closed state (a UI glitch), not the child-window-map
+        # corruption a mixer-strip design risked -- but there's no
+        # reason to reintroduce even that.
+        imgui.PushID(ctx, f"track_{i}_{guid}")
+        try:
+            imgui.SetNextItemOpen(ctx, not p["collapsed"])
+            # Status shown right on the header instead of right-aligned
+            # checkboxes -- those duplicated what _draw_track_strip_body
+            # already draws when expanded, and computing their right-
+            # aligned position (checkbox square + label + inter-
+            # checkbox spacing) kept coming out a little wrong,
+            # overflowing the row and forcing a small horizontal
+            # scrollbar on the whole tracks list. Ignore takes priority
+            # over Autoregressive when both happen to be set, matching
+            # infill.py's own precedence between the two.
+            #
+            # "###hdr" (three #, not two) -- this label's VISIBLE part
+            # changes with p["ignore"]/p["autoregressive"], but ### make
+            # everything after it (not the usual ##) the *only* thing
+            # hashed into this header's ID, so toggling those never
+            # changes its identity out from under SetNextItemOpen above.
+            if p["ignore"]:
+                header_label = f"{i + 1}. {name}  [Ignored]"
+                header_color = THEME_TEXT_MUTED
+            elif p["autoregressive"]:
+                header_label = f"{i + 1}. {name}  [Autoregressive]"
+                header_color = THEME_ACCENT_BRIGHT
+            else:
+                header_label = f"{i + 1}. {name}"
+                header_color = None
 
-        imgui.PushID(ctx, guid)
-        track_changed = False
+            if header_color is not None:
+                imgui.PushStyleColor(ctx, imgui.Col_Text(), _signed32(header_color))
+            try:
+                is_expanded = imgui.CollapsingHeader(ctx, f"{header_label}###hdr")[0]
+            finally:
+                if header_color is not None:
+                    imgui.PopStyleColor(ctx, 1)
+            if is_expanded == p["collapsed"]:
+                p["collapsed"] = int(not is_expanded)
+                track_params[guid] = p
+                changed = True
 
-        # "###" keeps the header's open/closed state tied to a stable ID
-        # even though the visible label (before "###") changes when the
-        # [Ignored]/[Autoregressive] suffix is added or removed -- without
-        # it, CollapsingHeader treats the changed text as a brand new
-        # widget and snaps back to its default (closed) state.
-        expanded, _ = imgui.CollapsingHeader(ctx, header + "###header")
-        if expanded:
-            c, v = imgui.Checkbox(ctx, "Ignore Track", bool(p["ignore"]))
-            if c: p["ignore"] = int(v); track_changed = True
-            imgui.SameLine(ctx)
-            c, v = imgui.Checkbox(ctx, "Autoregressive", bool(p["autoregressive"]))
-            if c: p["autoregressive"] = int(v); track_changed = True
+            if is_expanded:
+                imgui.Indent(ctx)
+                try:
+                    if _draw_track_strip_body(p, is_drum):
+                        track_params[guid] = p
+                        changed = True
+                finally:
+                    imgui.Unindent(ctx)
+        finally:
+            imgui.PopID(ctx)
 
-            if is_drum is None:
-                imgui.TextDisabled(ctx, "Instrument not detected -- showing all controls below.")
-                imgui.TextDisabled(ctx, "Density applies to drum tracks only; the rest apply to melodic tracks only.")
-
-            if is_drum is not False:
-                c, v = imgui.SliderInt(ctx, "Density (0=Any)", p["density"], 0, 10)
-                if c: p["density"] = v; track_changed = True
-
-            if is_drum is not True:
-                c, v = imgui.SliderInt(ctx, "Polyphony Min (0=Any)", p["min_polyphony_q"], 0, 10)
-                if c: p["min_polyphony_q"] = v; track_changed = True
-
-                c, v = imgui.SliderInt(ctx, "Polyphony Max (0=Any)", p["max_polyphony_q"], 0, 10)
-                if c: p["max_polyphony_q"] = v; track_changed = True
-
-                c, v = imgui.Combo(ctx, "Note Duration Min", p["min_note_duration_q"], "\0".join(NOTE_DURATION_LABELS) + "\0")
-                if c: p["min_note_duration_q"] = v; track_changed = True
-
-                c, v = imgui.Combo(ctx, "Note Duration Max", p["max_note_duration_q"], "\0".join(NOTE_DURATION_LABELS) + "\0")
-                if c: p["max_note_duration_q"] = v; track_changed = True
-
-            if model_type in ("prism", "expressive"):
-                if is_drum is not True:
-                    c, v = imgui.Combo(ctx, "Key Signature", p["key_signature"], "\0".join(KEY_SIGNATURE_LABELS) + "\0")
-                    if c: p["key_signature"] = v; track_changed = True
-
-                    c, v = imgui.SliderInt(ctx, "Pitch Range (0=Any)", p["pitch_range"], 0, 128)
-                    if c: p["pitch_range"] = v; track_changed = True
-
-                c, v = imgui.SliderInt(ctx, "Silence Proportion (0=Any)", p["silence_proportion"], 0, 10)
-                if c: p["silence_proportion"] = v; track_changed = True
-
-                if is_drum is not True:
-                    c, v = imgui.SliderInt(ctx, "Pitch Class Set Size (0=Any)", p["pitch_class_set"], 0, 13)
-                    if c: p["pitch_class_set"] = v; track_changed = True
-
-            if model_type == "expressive":
-                c, v = imgui.Combo(ctx, "Quantization Grid Depth (NOMML)", p["nomml"], "\0".join(NOMML_LABELS) + "\0")
-                if c: p["nomml"] = v; track_changed = True
-
-            pc = _draw_pitch_remix_controls(p)
-            if pc:
-                track_changed = True
-
-        imgui.PopID(ctx)
-
-        if track_changed:
-            track_params[guid] = p
-            changed = True
-
-    return changed, clicked
+    return changed
 
 # ---------------------------------------------------------------------------
-# UI: Top banner
+# UI: Banner + Console log
 # ---------------------------------------------------------------------------
 
-def draw_top_banner():
-    """Centered wordmark across the top of the window, in a fixed font size
-    -- its height never changes with the window; only its horizontal
-    position (to stay centered) does."""
+def draw_banner(width, row_h):
+    """Draws the centered MIDI-GPT wordmark in a fixed-size child -- shown
+    next to Setup (see loop()). A fixed child (rather than the old full-
+    window-width centering) so it can share its row with Setup's controls
+    without either one caring about the other's actual content width."""
     imgui.PushFont(ctx, mono_font, MGPT_BANNER_FONT_SIZE)
-    try:
-        banner_w, _ = imgui.CalcTextSize(ctx, MGPT_BANNER)
-        avail_w, _ = imgui.GetContentRegionAvail(ctx)
-        imgui.SetCursorPosX(ctx, imgui.GetCursorPosX(ctx) + max(0.0, (avail_w - banner_w) / 2))
-        imgui.TextColored(ctx, _signed32(LOGO_COLOR), MGPT_BANNER)
-    finally:
-        imgui.PopFont(ctx)
-
-# ---------------------------------------------------------------------------
-# UI: Console log
-# ---------------------------------------------------------------------------
-
-def draw_console(row_h):
-    # Logo drawn at a small font size so its ASCII art fits next to the
-    # console within row_h without clipping or forcing the row (and
-    # therefore the outer window) taller -- an outer window that overflows
-    # its budgeted height is what caused the EndChild/End crashes fixed
-    # earlier. Drawn in a fixed-width child (wider than the text itself) so
-    # it can be centered instead of hugging the console.
-    imgui.PushFont(ctx, mono_font, LOGO_FONT_SIZE)
-    logo_w, logo_h = imgui.CalcTextSize(ctx, LOGO)
+    banner_w, banner_h = imgui.CalcTextSize(ctx, MGPT_BANNER)
     imgui.PopFont(ctx)
 
-    avail_w, _ = imgui.GetContentRegionAvail(ctx)
-    console_w = max(100.0, avail_w - LOGO_CHILD_WIDTH - 16)
-
-    # Read-only multiline input instead of plain Text -- lets the user
-    # click-drag to select and Cmd/Ctrl+C to copy console output (e.g. to
-    # paste an error message elsewhere), which Text doesn't support.
-    imgui.InputTextMultiline(
-        ctx, "##console", "\n".join(log_lines), console_w, row_h,
-        imgui.InputTextFlags_ReadOnly())
-
-    imgui.SameLine(ctx)
-    imgui.BeginChild(ctx, "##logo", LOGO_CHILD_WIDTH, row_h)
+    imgui.BeginChild(ctx, "##banner", width, row_h)
     try:
-        imgui.SetCursorPos(ctx, max(0.0, (LOGO_CHILD_WIDTH - logo_w) / 2),
-                            max(0.0, (row_h - logo_h) / 2))
-        imgui.PushFont(ctx, mono_font, LOGO_FONT_SIZE)
+        imgui.SetCursorPos(ctx, max(0.0, (width - banner_w) / 2),
+                            max(0.0, (row_h - banner_h) / 2))
+        imgui.PushFont(ctx, mono_font, MGPT_BANNER_FONT_SIZE)
         try:
-            imgui.TextColored(ctx, _signed32(LOGO_COLOR), LOGO)
+            imgui.TextColored(ctx, _signed32(THEME_ACCENT), MGPT_BANNER)
         finally:
             imgui.PopFont(ctx)
     finally:
         imgui.EndChild(ctx)
+
+def draw_console(row_h):
+    # Read-only multiline input instead of plain Text -- lets the user
+    # click-drag to select and Cmd/Ctrl+C to copy console output (e.g. to
+    # paste an error message elsewhere), which Text doesn't support.
+    avail_w, _ = imgui.GetContentRegionAvail(ctx)
+    imgui.InputTextMultiline(
+        ctx, "##console", "\n".join(log_lines), avail_w, row_h,
+        imgui.InputTextFlags_ReadOnly())
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -919,34 +1187,37 @@ def init():
 
 def push_theme():
     """Dark-red theme, pushed around the whole window (including Begin())
-    so it covers the titlebar too, not just the content."""
+    so it covers the titlebar too, not just the content. Every value here
+    is one of the named THEME_* constants at the top of the file -- that's
+    the single place to edit to retheme the dashboard, including the ad hoc
+    TextColored() calls elsewhere that reference the same constants."""
     theme = [
-        (imgui.Col_WindowBg(),           0x1A0A0AFF),
-        (imgui.Col_ChildBg(),            0x140808FF),
-        (imgui.Col_PopupBg(),            0x1A0A0AFF),
-        (imgui.Col_TitleBg(),            0x220C0CFF),
-        (imgui.Col_TitleBgActive(),      0x4D1414FF),
-        (imgui.Col_Header(),             0x3D1414FF),
-        (imgui.Col_HeaderHovered(),      0x5C1C1CFF),
-        (imgui.Col_HeaderActive(),       0x7A2424FF),
-        (imgui.Col_Button(),             0x5C1C1CFF),
-        (imgui.Col_ButtonHovered(),      0x7A2424FF),
-        (imgui.Col_ButtonActive(),       0x992E2EFF),
-        (imgui.Col_FrameBg(),            0x2A1010FF),
-        (imgui.Col_FrameBgHovered(),     0x3D1717FF),
-        (imgui.Col_FrameBgActive(),      0x4D1C1CFF),
-        (imgui.Col_CheckMark(),          0xE63946FF),
-        (imgui.Col_SliderGrab(),         0xCC3333FF),
-        (imgui.Col_SliderGrabActive(),   0xE64545FF),
-        (imgui.Col_Border(),             0x5C1C1CFF),
-        (imgui.Col_Separator(),          0x5C1C1CFF),
-        (imgui.Col_SeparatorHovered(),   0x992E2EFF),
-        (imgui.Col_SeparatorActive(),    0xE64545FF),
-        (imgui.Col_Text(),               0xEDEDEDFF),
-        (imgui.Col_ScrollbarBg(),        0x1A0A0AFF),
-        (imgui.Col_ScrollbarGrab(),      0x5C1C1CFF),
-        (imgui.Col_ScrollbarGrabHovered(), 0x7A2424FF),
-        (imgui.Col_ScrollbarGrabActive(),  0x992E2EFF),
+        (imgui.Col_WindowBg(),             THEME_BG),
+        (imgui.Col_ChildBg(),              THEME_BG_CHILD),
+        (imgui.Col_PopupBg(),              THEME_BG),
+        (imgui.Col_TitleBg(),              THEME_BG_TITLE),
+        (imgui.Col_TitleBgActive(),        THEME_BG_TITLE_ACTIVE),
+        (imgui.Col_Header(),               THEME_BG_SURFACE),
+        (imgui.Col_HeaderHovered(),        THEME_ACCENT_DIM),
+        (imgui.Col_HeaderActive(),         THEME_ACCENT_HOVER),
+        (imgui.Col_Button(),               THEME_ACCENT_DIM),
+        (imgui.Col_ButtonHovered(),        THEME_ACCENT_HOVER),
+        (imgui.Col_ButtonActive(),         THEME_ACCENT_ACTIVE),
+        (imgui.Col_FrameBg(),              THEME_BG_FRAME),
+        (imgui.Col_FrameBgHovered(),       THEME_BG_FRAME_HOVER),
+        (imgui.Col_FrameBgActive(),        THEME_BG_FRAME_ACTIVE),
+        (imgui.Col_CheckMark(),            THEME_ACCENT),
+        (imgui.Col_SliderGrab(),           THEME_ACCENT_DEEP),
+        (imgui.Col_SliderGrabActive(),     THEME_ACCENT_BRIGHT),
+        (imgui.Col_Border(),               THEME_ACCENT_DIM),
+        (imgui.Col_Separator(),            THEME_ACCENT_DIM),
+        (imgui.Col_SeparatorHovered(),     THEME_ACCENT_ACTIVE),
+        (imgui.Col_SeparatorActive(),      THEME_ACCENT_BRIGHT),
+        (imgui.Col_Text(),                 THEME_TEXT),
+        (imgui.Col_ScrollbarBg(),          THEME_BG),
+        (imgui.Col_ScrollbarGrab(),        THEME_ACCENT_DIM),
+        (imgui.Col_ScrollbarGrabHovered(), THEME_ACCENT_HOVER),
+        (imgui.Col_ScrollbarGrabActive(),  THEME_ACCENT_ACTIVE),
     ]
     for col, rgba in theme:
         imgui.PushStyleColor(ctx, col, _signed32(rgba))
@@ -954,6 +1225,7 @@ def push_theme():
 
 def loop():
     global active_generation, active_batch, last_generation_result
+    global measured_console_header_h, measured_window_chrome_h, last_window_w
 
     # Poll for a finished background generation *before* Begin() -- same
     # timing as the "after End()" side effects below (nothing has opened an
@@ -966,7 +1238,18 @@ def loop():
         if done:
             finished_ctx = active_generation["ctx"]
             active_generation = None
-            result = infill.finish_generation(handle, finished_ctx)
+            try:
+                result = infill.finish_generation(handle, finished_ctx)
+            except Exception:
+                # A bad server response shape or a stale REAPER object
+                # reference here must not kill the defer loop -- that would
+                # freeze the whole dashboard until it's manually reopened,
+                # for what's usually just one bad generation. Log and move
+                # on; active_generation is already cleared above so the
+                # next "Run Infill" isn't blocked.
+                import traceback
+                print(traceback.format_exc() + "\n")
+                result = None
             if result is not None:
                 last_generation_result = result
                 if result.get("candidates") is not None:
@@ -987,7 +1270,15 @@ def loop():
     is_open = True
 
     try:
-        imgui.SetNextWindowSize(ctx, 560, 1050, imgui.Cond_FirstUseEver())
+        # 1150x700, not the old 560x1050 -- 1050px tall opened taller than
+        # most laptop screens' usable height on first-ever launch, and
+        # since ReaImGui persists geometry after that, the resize handle
+        # needed to shrink it back down could end up off-screen with
+        # nothing to grab. Wider instead of taller fits this layout better
+        # anyway: Generate and the Tracks mixer sit side by side (see the
+        # main_content block below), so there's more width to fill and
+        # less height needed than one long stacked column ever had.
+        imgui.SetNextWindowSize(ctx, 1150, 700, imgui.Cond_FirstUseEver())
         # This ReaImGui build persists window geometry across script runs,
         # and Cond_FirstUseEver never re-applies once that saved state
         # exists. If the window is ever dragged down to (near) zero height,
@@ -997,60 +1288,171 @@ def loop():
         # one-time reset can't undo a state that's re-saved degenerate on
         # every crash. Collapsing is left enabled; visible=False already
         # skips drawing safely below.
-        imgui.SetNextWindowSizeConstraints(ctx, 400, 300, 100000, 100000)
-        visible, is_open = imgui.Begin(ctx, "MIDI-GPT Dashboard", True)
+        #
+        # setup_row_h is exact -- it's the height WE give "##setup_body"
+        # (see below), so it's whatever SETUP_ROW_COUNT widget rows plus
+        # that child's own top/bottom WindowPadding actually costs, not a
+        # guess. console_header_h and window_chrome_h are each the REAL
+        # measured value from the previous frame (see
+        # measured_console_header_h / measured_window_chrome_h's own
+        # comments above) -- not formulas. Only the very first frame
+        # (before any measurement exists) falls back to a formula/constant
+        # guess, since being wrong for exactly one frame is harmless.
+        setup_row_h = (imgui.GetFrameHeightWithSpacing(ctx) * SETUP_ROW_COUNT
+                        + imgui.GetStyleVar(ctx, imgui.StyleVar_WindowPadding())[1] * 2)
+        if measured_console_header_h is not None:
+            console_header_h = measured_console_header_h
+        else:
+            console_header_h = imgui.GetTextLineHeightWithSpacing(ctx) * 2.0
+        if measured_window_chrome_h is not None:
+            window_chrome_h = measured_window_chrome_h
+        else:
+            window_chrome_h = WINDOW_CHROME_ESTIMATE
+
+        # Mode decided from last frame's actual window width (see
+        # last_window_w's comment) -- this frame's real width isn't known
+        # until after Begin(), which is too late for a size constraint.
+        # The width floor itself, though, must NOT depend on this mode: if
+        # it did (700 while "wide", 380 once "narrow"), the 700 floor would
+        # never let the window narrow past 700 in the first place, so
+        # last_window_w could never drop below 700, so narrow_layout could
+        # never become true -- a permanent deadlock. MIN_WINDOW_WIDTH is
+        # therefore the unconditional floor in both modes; only min height
+        # depends on which layout is currently active.
+        narrow_layout = last_window_w is not None and last_window_w < NARROW_LAYOUT_WIDTH
+        if narrow_layout:
+            # Four rows stacked instead of two -- Generate and Tracks each
+            # need their own CONTENT_MIN_HEIGHT floor now that they're not
+            # sharing a row.
+            min_window_h = (setup_row_h + CONTENT_MIN_HEIGHT * 2 + console_header_h
+                             + CONSOLE_ROW_HEIGHT + window_chrome_h)
+        else:
+            min_window_h = (setup_row_h + CONTENT_MIN_HEIGHT + console_header_h
+                             + CONSOLE_ROW_HEIGHT + window_chrome_h)
+        max_window_h = min_window_h * HEIGHT_MAX_MULTIPLIER
+        imgui.SetNextWindowSizeConstraints(ctx, MIN_WINDOW_WIDTH, min_window_h, 100000, max_window_h)
+        # "##layout6" (invisible in the title bar -- everything after "##"
+        # is ID-only, not displayed) gives this window a fresh identity with
+        # no saved geometry, so the new SetNextWindowSize above actually
+        # takes effect. Without it, Cond_FirstUseEver is a no-op for anyone
+        # who already has ReaImGui-persisted geometry saved under an older
+        # id from before this layout existed -- it only applies the very
+        # first time a given window id is ever seen, not on every code
+        # change. Bumped from ##layout5 -> ##layout6 alongside simplifying
+        # the console back down to a fixed-height box (no collapsing, no
+        # popout window), since the old layout's proportions no longer
+        # apply. Bump again in the future if the default size/layout
+        # changes enough to want to reset it once more.
+        visible, is_open = imgui.Begin(ctx, "MIDI-GPT Dashboard##layout6", True)
 
         if visible:
             try:
-                draw_top_banner()
-                imgui.Spacing(ctx)
+                # Real chrome (title bar + top/bottom WindowPadding),
+                # measured right after Begin() -- cached in
+                # measured_window_chrome_h (see its own comment) for next
+                # frame's min_window_h calculation above. Only measured
+                # here (not when collapsed/invisible), since a collapsed
+                # window's content region doesn't reflect real chrome.
+                _, chrome_avail_h = imgui.GetContentRegionAvail(ctx)
+                measured_window_chrome_h = imgui.GetWindowHeight(ctx) - chrome_avail_h
 
-                # Everything except the console lives in its own scrollable
-                # child, sized to leave room for the console below it. This
-                # ReaImGui build corrupts its window stack (EndChild/End
-                # assertions) when the *outer* window's content overflows
-                # while a fixed-height child (the console) sits at the
-                # bottom -- e.g. expanding enough Track Controls sections to
-                # exceed the window height. Confining the scrolling to an
-                # inner child instead means the outer window's own content
-                # never overflows.
-                #
-                # The main content area gets priority for space: as the
-                # window shrinks, the console+logo row gives up height
-                # first, all the way down to nothing if needed. The two
-                # heights are computed to always sum to exactly usable_h --
-                # never more -- because independent fixed floors (the old
-                # approach) can each get satisfied individually while still
-                # summing to more than the actual window has, overflowing
-                # the outer window and crashing this ReaImGui build the
-                # same way an expanded Track Controls section once did.
-                # size_h=0 has a special "use remaining space" meaning in
-                # BeginChild/InputTextMultiline, so heights are floored at
-                # 1.0 rather than 0 to avoid accidentally triggering that.
-                avail_w, avail_h = imgui.GetContentRegionAvail(ctx)
-                usable_h = max(2.0, avail_h - 40)
-                console_row_h = min(CONSOLE_ROW_HEIGHT, max(1.0, usable_h - MIN_CONTENT_HEIGHT))
-                content_h = max(1.0, usable_h - console_row_h)
+                # Cache the real width for next frame's pre-Begin decision
+                # -- but keep drawing this frame with the SAME narrow_layout
+                # already decided above, rather than re-deriving it from
+                # this fresh value. Re-deriving it here used to let the two
+                # disagree mid-drag (this frame's true width can differ
+                # from the width min_window_h was just sized for), so for
+                # exactly the transitional frame(s) the window would be
+                # sized for one layout while content rendered for the
+                # other -- an overflow that corrupted this ReaImGui
+                # build's window stack ("Assertion failed:
+                # child_window->Flags & ImGuiWindowFlags_ChildWindow") the
+                # same way every other overflow has all session. One
+                # frame of lag on which layout gets drawn during a resize
+                # is a small price for that never happening again.
+                last_window_w = imgui.GetWindowWidth(ctx)
 
-                imgui.BeginChild(ctx, "##main_content", 0, content_h)
+                # Wide: Setup (rarely touched once configured) shares its
+                # row with the MIDI-GPT wordmark, wordmark on the left,
+                # then Generate (Run Infill + progress + Global Options --
+                # what's touched every run) and Tracks sit side by side
+                # below, both visible at once rather than switching between
+                # them. Narrow: the same four sections stacked full-width,
+                # one per row, since there's no longer room to put any two
+                # of them side by side. No "Setup" label above it either
+                # way -- the row's contents are self-explanatory.
+                if narrow_layout:
+                    avail_w0, _ = imgui.GetContentRegionAvail(ctx)
+                    imgui.PushFont(ctx, mono_font, MGPT_BANNER_FONT_SIZE)
+                    _, banner_text_h = imgui.CalcTextSize(ctx, MGPT_BANNER)
+                    imgui.PopFont(ctx)
+                    banner_row_h = (banner_text_h
+                                     + imgui.GetStyleVar(ctx, imgui.StyleVar_WindowPadding())[1] * 2)
+                    draw_banner(avail_w0, banner_row_h)
+                else:
+                    draw_banner(BANNER_CHILD_WIDTH, setup_row_h)
+                    imgui.SameLine(ctx)
+
+                imgui.BeginChild(ctx, "##setup_body", 0, setup_row_h)
                 try:
-                    imgui.SeparatorText(ctx, "Actions")
-                    clicked = draw_actions()
-                    gen_clicked = draw_generation_result()
-                    if gen_clicked:
-                        clicked = gen_clicked
-
-                    need_save_global = draw_global_options(params)
-
-                    imgui.SeparatorText(ctx, "Track Controls")
-                    need_save_track, track_clicked = draw_track_controls(track_params)
-                    if track_clicked:
-                        clicked = track_clicked
+                    setup_clicked = draw_setup_panel()
+                    if setup_clicked:
+                        clicked = setup_clicked
                 finally:
                     imgui.EndChild(ctx)
 
+                # No Spacing/Separator/Spacing here -- it wasn't buying
+                # anything visually and just ate into the window's usable
+                # height. avail_h here is a live measurement taken directly
+                # in the window (no wrapping child in between), so it's
+                # exactly what's really left after Setup -- no guessing
+                # about Setup's own overhead needed to get this number.
+                avail_w, avail_h = imgui.GetContentRegionAvail(ctx)
+
+                # Console is a flat CONSOLE_ROW_HEIGHT (plus its own
+                # SeparatorText row). Wide: Generate/Tracks share the rest
+                # of the height, side by side, with no ceiling of their
+                # own. Narrow: they split the rest between them instead,
+                # stacked, each still floored at CONTENT_MIN_HEIGHT.
+                stack_h = avail_h - CONSOLE_ROW_HEIGHT - console_header_h
+                if narrow_layout:
+                    generate_w = 0
+                    generate_h = max(CONTENT_MIN_HEIGHT, stack_h / 2)
+                    tracks_h = max(CONTENT_MIN_HEIGHT, stack_h - generate_h)
+                else:
+                    generate_w = min(GENERATE_PANEL_WIDTH, max(260.0, avail_w * 0.4))
+                    generate_h = max(CONTENT_MIN_HEIGHT, stack_h)
+                    tracks_h = generate_h
+
+                imgui.BeginChild(ctx, "##generate_panel", generate_w, generate_h)
+                try:
+                    imgui.SeparatorText(ctx, "Generate")
+                    if imgui.Button(ctx, "Run Infill", -1, 32):
+                        clicked = "run_infill"
+                    gen_clicked = draw_generation_result()
+                    if gen_clicked:
+                        clicked = gen_clicked
+                    imgui.Spacing(ctx)
+                    need_save_global = draw_global_options(params)
+                finally:
+                    imgui.EndChild(ctx)
+
+                if not narrow_layout:
+                    imgui.SameLine(ctx)
+                imgui.BeginChild(ctx, "##tracks_panel", 0, tracks_h)
+                try:
+                    imgui.SeparatorText(ctx, "Tracks")
+                    need_save_track = draw_track_controls(track_params)
+                finally:
+                    imgui.EndChild(ctx)
+
+                # Real height measured via cursor position, not guessed --
+                # cached in measured_console_header_h (see its own comment)
+                # for next frame's content_h calculation above.
+                cursor_y_before = imgui.GetCursorPosY(ctx)
                 imgui.SeparatorText(ctx, "Console")
-                draw_console(console_row_h)
+                measured_console_header_h = imgui.GetCursorPosY(ctx) - cursor_y_before
+                draw_console(CONSOLE_ROW_HEIGHT)
             except Exception:
                 # Defer printing until after End() -- keeps this path
                 # consistent with the other post-frame side effects below
@@ -1081,17 +1483,33 @@ def loop():
     if need_save_track:
         save_track_params(track_params)
 
-    if clicked == "cancel_generation":
-        if active_generation is not None:
-            infill.cancel_generation(active_generation["handle"])
-            print("Cancellation requested -- waiting for the server to stop...\n")
-    elif clicked and clicked.startswith("batch_select_"):
-        switch_batch_candidate(int(clicked[len("batch_select_"):]))
-    elif clicked in ACTIONS:
-        log_lines.clear()
-        ACTIONS[clicked]()
+    try:
+        if clicked == "cancel_generation":
+            if active_generation is not None:
+                infill.cancel_generation(active_generation["handle"])
+                print("Cancellation requested -- waiting for the server to stop...\n")
+        elif clicked and clicked.startswith("batch_select_"):
+            switch_batch_candidate(int(clicked[len("batch_select_"):]))
+        elif clicked in ACTIONS:
+            log_lines.clear()
+            ACTIONS[clicked]()
+    except Exception:
+        # Same reasoning as the finish_generation() guard above -- an
+        # action button (setup tracks, apply soundfont template, etc.)
+        # throwing here must not kill the defer loop.
+        import traceback
+        print(traceback.format_exc() + "\n")
 
     if is_open:
         RPR_defer("loop()")
+    elif active_generation is not None:
+        # The window was closed with a generation still in flight. Nothing
+        # else cancels it -- the background thread (REAPER_midigpt_infill.py)
+        # would otherwise keep running against the server for up to its own
+        # timeout with no cancel ever sent, and a server that only handles
+        # one generation at a time would leave the *next* dashboard session's
+        # first request stalled behind this orphaned one.
+        infill.cancel_generation(active_generation["handle"])
+        print("Dashboard closed with a generation in flight -- cancelling it.\n")
 
 RPR_defer("init()")
