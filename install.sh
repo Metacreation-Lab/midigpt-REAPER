@@ -727,7 +727,15 @@ if [ -d "$REAPER_DIR" ]; then
             # not abort the whole install under `set -e`; the checksum is a
             # nice-to-have (handled as "installing unverified" below), not a
             # hard requirement.
-            REAPACK_RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/cfillion/reapack/releases/latest" 2>/dev/null || true)"
+            # Unauthenticated API calls share a 60/hour limit per IP (CI runners
+            # share IPs); a GITHUB_TOKEN in the environment (CI sets one)
+            # raises that to 1000/hour.
+            REAPACK_API_URL="https://api.github.com/repos/cfillion/reapack/releases/latest"
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                REAPACK_RELEASE_JSON="$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$REAPACK_API_URL" 2>/dev/null || true)"
+            else
+                REAPACK_RELEASE_JSON="$(curl -fsSL "$REAPACK_API_URL" 2>/dev/null || true)"
+            fi
             if [ -n "$REAPACK_RELEASE_JSON" ] && check_cmd python3; then
                 REAPACK_EXPECTED_SHA="$(printf '%s' "$REAPACK_RELEASE_JSON" | python3 -c "
 import json, sys
@@ -765,7 +773,11 @@ except Exception:
                         # user directory, so no elevated privileges needed.
                         xattr -d com.apple.quarantine "$REAPACK_DEST" 2>/dev/null || true
                     fi
-                    ok "ReaPack installed and checksum-verified ($REAPACK_ASSET)"
+                    if [ -n "$REAPACK_EXPECTED_SHA" ]; then
+                        ok "ReaPack installed and checksum-verified ($REAPACK_ASSET)"
+                    else
+                        ok "ReaPack installed, unverified ($REAPACK_ASSET)"
+                    fi
                     REAPACK_READY=true
                 else
                     rm -f "$REAPACK_DEST"

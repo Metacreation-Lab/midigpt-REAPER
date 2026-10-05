@@ -44,6 +44,13 @@ on:
       - ".github/workflows/test-install.yml"
   workflow_dispatch: {}
 
+# The installers fetch ReaPack's published checksum from the GitHub API;
+# authenticated, that isn't subject to the 60/hour unauthenticated limit that
+# shared runner IPs can exhaust (which turned the checksum step into a
+# random [WARN] and a failed run).
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   reaper-states-unix:
     name: REAPER state matrix (${{ matrix.os }})

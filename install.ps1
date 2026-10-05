@@ -871,12 +871,19 @@ if (Test-Path $ReaperDir) {
         # tampered-with download before trusting it.
         $ExpectedSha = $null
         try {
-            $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/cfillion/reapack/releases/latest" -TimeoutSec 15
+            # Unauthenticated API calls share a 60/hour limit per IP (CI
+            # runners share IPs); a GITHUB_TOKEN in the environment (CI sets
+            # one) raises that to 1000/hour.
+            $ApiHeaders = @{}
+            if ($env:GITHUB_TOKEN) { $ApiHeaders["Authorization"] = "Bearer $env:GITHUB_TOKEN" }
+            $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/cfillion/reapack/releases/latest" -Headers $ApiHeaders -TimeoutSec 15
             $Asset = $Release.assets | Where-Object { $_.name -eq $ReapackAsset }
             if ($Asset -and $Asset.digest) {
                 $ExpectedSha = ($Asset.digest -replace "^sha256:", "").ToLower()
             }
         } catch {
+        }
+        if (-not $ExpectedSha) {
             Write-Warn "Could not fetch an expected checksum for ReaPack -- installing unverified"
         }
 
@@ -895,7 +902,11 @@ if (Test-Path $ReaperDir) {
                 # zone identifier ourselves, now that the checksum above
                 # confirms it's what GitHub actually published.
                 Unblock-File -Path $ReapackDest -ErrorAction SilentlyContinue
-                Write-OK "ReaPack installed and checksum-verified ($ReapackAsset)"
+                if ($ExpectedSha) {
+                    Write-OK "ReaPack installed and checksum-verified ($ReapackAsset)"
+                } else {
+                    Write-OK "ReaPack installed, unverified ($ReapackAsset)"
+                }
                 $ReapackReady = $true
             } else {
                 Remove-Item $ReapackDest -Force -ErrorAction SilentlyContinue
