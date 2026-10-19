@@ -38,6 +38,10 @@ SKIP_REAPER_CONFIG=false
 # Target MIDI-GPT source repo path. Auto-detected at the sibling path ../MIDI-GPT.
 MIDIGPT_SRC=""
 
+# The midigpt release this plugin is tested against (PyPI, or the matching
+# v<version> tag for the GitHub fallback). Override with MIDIGPT_VERSION.
+MIDIGPT_VERSION="${MIDIGPT_VERSION:-0.4.0}"
+
 # ── Colors ──────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -355,8 +359,15 @@ hf_access() {
         cached)  warn "Couldn't reach Hugging Face; using the models already downloaded."; return 0 ;;
         offline) warn "Couldn't reach Hugging Face; the server downloads the model on its first start."; return 0 ;;
     esac
-    # No terminal (CI, or piped without /dev/tty): use HF_TOKEN if it is set
+    # The prompt reads from the terminal even when stdin isn't one: update.sh
+    # runs this installer with stdin from /dev/null (to skip its launch
+    # prompt), and that is how existing installs first meet the gate.
+    local tty=/dev/stdin
     if [ ! -t 0 ]; then
+        if (: < /dev/tty) 2>/dev/null; then tty=/dev/tty; else tty=""; fi
+    fi
+    # No terminal at all (CI): use HF_TOKEN if it is set
+    if [ -z "$tty" ]; then
         if [ -n "${HF_TOKEN:-}" ] && hf_login "$HF_TOKEN"; then hf_check; fi
         if [ "$HF_ACCESS" = ok ]; then
             ok "Hugging Face: access to $HF_REPO (HF_TOKEN saved)"
@@ -378,7 +389,7 @@ hf_access() {
     fi
     local tok
     while true; do
-        read -r -s -p "  Paste the token (hidden), or press Enter to skip: " tok; echo
+        read -r -s -p "  Paste the token (hidden), or press Enter to skip: " tok < "$tty"; echo
         if [ -z "$tok" ]; then
             [ "$HF_ACCESS" = gated ] && hf_check
             if [ "$HF_ACCESS" = ok ]; then
@@ -693,13 +704,17 @@ if [ -n "$MIDIGPT_SRC" ] && [ -d "$MIDIGPT_SRC" ]; then
     check_build_tools || fail "Missing build tools required for source install"
     pip install -e "${MIDIGPT_SRC}[http,inference]" 2>&1 | tail -5
 else
-    info "Installing midigpt[http,inference] from PyPI ..."
-    if ! pip install "midigpt[http,inference]" 2>&1 | tail -5; then
+    info "Installing midigpt[http,inference]==$MIDIGPT_VERSION from PyPI ..."
+    if ! pip install "midigpt[http,inference]==$MIDIGPT_VERSION" 2>&1 | tail -5; then
         warn "PyPI install failed — falling back to cloning MIDI-GPT from GitHub ..."
         MIDIGPT_CLONE="$(cd "$REPO_DIR/.." && pwd)/MIDI-GPT"
         if [ ! -d "$MIDIGPT_CLONE/.git" ]; then
             git clone https://github.com/Metacreation-Lab/MIDI-GPT.git "$MIDIGPT_CLONE" \
                 || fail "Failed to clone MIDI-GPT. Check your internet connection and try again."
+            # Only a clone made here is moved to the release tag -- an
+            # existing sibling checkout may be someone's working copy.
+            git -C "$MIDIGPT_CLONE" checkout --quiet "v$MIDIGPT_VERSION" \
+                || warn "No v$MIDIGPT_VERSION tag in MIDI-GPT -- installing its default branch instead"
         else
             info "Existing MIDI-GPT clone found at $MIDIGPT_CLONE"
         fi

@@ -66,6 +66,10 @@ $VenvDir = Join-Path $RepoDir ".venv"
 $PythonMinVersion = "3.10"
 $PythonCmd = ""
 
+# The midigpt release this plugin is tested against (PyPI, or the matching
+# v<version> tag for the GitHub fallback). Override with $env:MIDIGPT_VERSION.
+$MidigptVersion = if ($env:MIDIGPT_VERSION) { $env:MIDIGPT_VERSION } else { "0.4.0" }
+
 # ── Helpers ─────────────────────────────────────────────────────
 
 function Write-Info { param($msg) Write-Host "[INFO] " -ForegroundColor Blue -NoNewline; Write-Host $msg }
@@ -882,13 +886,17 @@ if ($MidigptSrc -and (Test-Path $MidigptSrc)) {
     if ($LASTEXITCODE -ne 0) { Write-Fail "Missing build tools required for source install" }
     pip install -e "${MidigptSrc}[http,inference]" 2>&1
 } else {
-    Write-Info "Installing midigpt[http,inference] from PyPI ..."
-    pip install "midigpt[http,inference]" 2>&1
+    Write-Info "Installing midigpt[http,inference]==$MidigptVersion from PyPI ..."
+    pip install "midigpt[http,inference]==$MidigptVersion" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "PyPI install failed — falling back to cloning MIDI-GPT from GitHub ..."
         if (-not (Test-Path (Join-Path $MidigptSibling ".git"))) {
             git clone https://github.com/Metacreation-Lab/MIDI-GPT.git $MidigptSibling
             if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to clone MIDI-GPT. Check your internet connection." }
+            # Only a clone made here is moved to the release tag -- an
+            # existing sibling checkout may be someone's working copy.
+            git -C $MidigptSibling checkout --quiet "v$MidigptVersion" 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Warn "No v$MidigptVersion tag in MIDI-GPT -- installing its default branch instead" }
         } else {
             Write-Info "Existing MIDI-GPT clone found at $MidigptSibling"
         }

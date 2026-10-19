@@ -139,6 +139,8 @@ The token is saved in `~/.cache/huggingface/token`, where the server finds it on
 | `--torch-gpu` | `-TorchGpu` | Install PyTorch with GPU support (CUDA on Linux/Windows; macOS MPS is already in the default wheel) |
 | `--midigpt-src=PATH` | `-MidigptSrc PATH` | Path to a local MIDI-GPT source checkout (sibling folder by default) |
 
+The installer installs [`midigpt`](https://pypi.org/project/midigpt/) 0.4.0, the release this plugin is tested against. To install another release, set `MIDIGPT_VERSION` (e.g. `MIDIGPT_VERSION=0.4.1 ./install.sh`, or `$env:MIDIGPT_VERSION` on Windows).
+
 ### Updating / Uninstalling
 
 - **Update:** `./update.sh` / `.\update.ps1` (accepts any installer flag, e.g. `./update.sh --torch-gpu`)
