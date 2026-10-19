@@ -33,4 +33,12 @@ if "%~1"=="" (
 
 echo.
 echo Server stopped.
+REM Anything but a clean stop at startup is most often the model download:
+REM the checkpoints on Hugging Face need an account that accepted the license.
+if errorlevel 1 (
+    echo.
+    echo If the message above mentions a gated repo, 401 or 403: accept the license at
+    echo https://huggingface.co/Metacreation/MIDI-GPT, then save a token with:
+    echo   "%~dp0.venv\Scripts\hf.exe" auth login
+)
 pause

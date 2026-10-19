@@ -43,8 +43,17 @@ if [ $# -eq 0 ]; then
 else
     midigpt-http --port 3456 "$@"
 fi
+status=$?
 
 # Keep window open on error
 echo ""
 echo "Server stopped."
+# 130 = Ctrl+C. Anything else at startup is most often the model download:
+# the checkpoints on Hugging Face need an account that accepted the license.
+if [ $status -ne 0 ] && [ $status -ne 130 ]; then
+    echo ""
+    echo "If the message above mentions a gated repo, 401 or 403: accept the license at"
+    echo "https://huggingface.co/Metacreation/MIDI-GPT, then save a token with:"
+    echo "  $SCRIPT_DIR/.venv/bin/hf auth login"
+fi
 read -rp "Press Enter to close..."

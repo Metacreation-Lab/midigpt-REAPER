@@ -397,6 +397,7 @@
   - [One-Line Install](#one-line-install)
   - [Quick Install (Release Package)](#quick-install-release-package)
   - [REAPER Setup](#reaper-setup)
+  - [Hugging Face Access](#hugging-face-access)
   - [Installer Flags](#installer-flags)
   - [Updating / Uninstalling](#updating-uninstalling)
 - [Features](#features)
@@ -431,6 +432,7 @@
 - **git** — used as a fallback source clone if installing the MIDI-GPT backend from PyPI fails
 - **curl** — used to download ReaImGui, ReaPack, and the Arachno soundfont
 - **Microsoft Visual C++ Redistributable** (Windows only, 14.40 or newer) — required by PyTorch. The installer checks for it and offers to install it from Microsoft for you (Windows will ask for administrator permission once). To install it yourself: [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)
+- **Hugging Face account** — free; the model weights are downloaded from [Metacreation/MIDI-GPT](https://huggingface.co/Metacreation/MIDI-GPT), which needs an account that has accepted the model license, and an access token. See [Hugging Face Access](#hugging-face-access)
 - **OS:** macOS, Linux, or Windows 10/11 (64-bit)
 
 ### One-Line Install
@@ -479,6 +481,16 @@ After installing, load the dashboard into REAPER once:
 
 (The folder also contains 4 other scripts the dashboard's buttons call under the hood — they're not meant to be loaded directly, so there's no need to touch them.)
 
+### Hugging Face Access
+
+The model weights are downloaded from [Metacreation/MIDI-GPT](https://huggingface.co/Metacreation/MIDI-GPT) on Hugging Face, which needs a free account:
+
+1. Sign in at [huggingface.co](https://huggingface.co) and accept the license on the [model page](https://huggingface.co/Metacreation/MIDI-GPT).
+2. Create an access token in **Settings › Access Tokens** ([huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)); the **Read** type is enough.
+3. Paste it when the installer asks (it's read without being shown), or run `hf auth login` later with the venv activated (`~/midigpt-REAPER/.venv/bin/hf auth login`, or `.venv\Scripts\hf.exe auth login` on Windows).
+
+The token is saved in `~/.cache/huggingface/token`, where the server finds it on every start; setting `HF_TOKEN` works too. A non-interactive install (CI, or no terminal) saves `HF_TOKEN` if it is set. The token is only used by the server to download the model; the REAPER dashboard never sees it, and a model that's already downloaded keeps working without one.
+
 ### Installer Flags
 
 | macOS / Linux | Windows | What it does |
@@ -493,7 +505,7 @@ After installing, load the dashboard into REAPER once:
 ### Updating / Uninstalling
 
 - **Update:** `./update.sh` / `.\update.ps1` (accepts any installer flag, e.g. `./update.sh --torch-gpu`)
-- **Uninstall:** `./uninstall.sh` / `.\uninstall.ps1` — removes the Python virtual environment, the REAPER Scripts integration, and the downloaded Arachno soundfont. Leaves ReaPack, ReaImGui, Sforzando, and REAPER's ReaScript/Python settings in place (you may be using them for something else; on Linux it prints the `apt remove` command for Sforzando), and asks first about deleting cached model checkpoints (from `huggingface_hub`'s shared cache) and the plugin folder itself.
+- **Uninstall:** `./uninstall.sh` / `.\uninstall.ps1` — removes the Python virtual environment, the REAPER Scripts integration, and the downloaded Arachno soundfont. Leaves ReaPack, ReaImGui, Sforzando, and REAPER's ReaScript/Python settings in place (you may be using them for something else; on Linux it prints the `apt remove` command for Sforzando), and asks first about deleting cached model checkpoints (from `huggingface_hub`'s shared cache) and the plugin folder itself. A saved Hugging Face token stays in `~/.cache/huggingface` (`hf auth logout` removes it).
 
 ---
 
@@ -561,6 +573,7 @@ By default the dashboard talks to a server on `http://127.0.0.1:3456`. If your M
 - **Generating more bars than Context Length**: you can target more bars than the Context Length in one request — generation uses a sliding window, producing Bars per Step bars at a time and stepping forward through the full target range, rather than needing everything to fit in a single context window at once.
 - **Per-track controls on an empty track (non-Autoregressive/infill mode)**: with Autoregressive off, control values for a track's unset bars get inferred from that track's own existing content. On an empty track that context is itself empty, which biases the inferred controls toward silence — set density/polyphony/duration explicitly before generating into an empty track rather than leaving them to be inferred. This doesn't apply with Autoregressive on: there, the model resamples its own control values instead of inferring them from existing content, so leaving them unset just lets it choose freely — only set them yourself if you want to force a specific value.
 - **Density vs. polyphony/duration**: density only ever affects drum tracks, polyphony and note duration only ever affect melodic tracks — setting one on the wrong track type is a no-op, and the dashboard hides whichever half doesn't apply once it's detected the track's role.
+- **Server stops right after starting**: if its window mentions a gated repo, 401 or 403, the model download was refused — accept the license and save a token (see [Hugging Face Access](#hugging-face-access)), then start the server again.
 - **Instrument fallback**: a track name the plugin doesn't recognize falls back to MIDI-content detection (channel 10, or a Program Change event), then finally defaults to piano if that fails too. If a track is generating piano-like output unexpectedly, check its name against [INSTRUMENTS.md](INSTRUMENTS.md) — a matching name is always more reliable than the content fallback.
 
 ---
@@ -661,6 +674,8 @@ Known gaps and features we'd like to add. Contributions are welcome:
 ## License
 
 [MIT](LICENSE) — Copyright (c) 2026 Metacreation Lab, Simon Fraser University
+
+This license covers the code in this repository. The MIDI-GPT model weights the server downloads have their own license, shown on the [model page](https://huggingface.co/Metacreation/MIDI-GPT) on Hugging Face.
 
 
 ---

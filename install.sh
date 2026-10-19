@@ -304,6 +304,102 @@ download_reaimgui() {
     return 0
 }
 
+# ── Hugging Face access ─────────────────────────────────────────
+# The model checkpoints on Hugging Face are gated: downloading them needs
+# an account that accepted the license, and a token saved where
+# midigpt-http finds it (~/.cache/huggingface/token).
+
+HF_REPO="Metacreation/MIDI-GPT"
+HF_PROBE_MODEL="yellow_medium"
+
+# Sets HF_ACCESS: ok (the saved token can download), nologin (no token
+# saved), gated (the token's account has no access), cached (Hugging Face
+# couldn't be reached, but a model is already downloaded), offline. Access
+# is per repo, so one checkpoint is enough to probe. HF_TOKEN is left out:
+# what counts is the saved token, the one the server launchers will use.
+hf_check() {
+    HF_ACCESS="$(env -u HF_TOKEN python - "$HF_REPO" "$HF_PROBE_MODEL" <<'PY' 2>/dev/null || echo offline
+import glob, os, sys
+from huggingface_hub import constants, get_hf_file_metadata, get_token, hf_hub_url
+from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError
+from midigpt.inference.engine import _resolve_checkpoint_filename
+repo, model = sys.argv[1:]
+try:
+    get_hf_file_metadata(hf_hub_url(repo, _resolve_checkpoint_filename(repo, model)))
+    print("ok")
+except (GatedRepoError, RepositoryNotFoundError):
+    print("gated" if get_token() else "nologin")
+except Exception:
+    snapshots = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "snapshots")
+    print("cached" if glob.glob(os.path.join(snapshots, "*", "*.safetensors")) else "offline")
+PY
+)"
+}
+
+# Saves a Hugging Face token where midigpt-http finds it. The token is
+# passed in the environment, not on a command line.
+hf_login() {
+    MIDIGPT_HF_TOKEN="$1" env -u HF_TOKEN python -c '
+import os, sys
+from huggingface_hub import login
+try:
+    login(token=os.environ["MIDIGPT_HF_TOKEN"], add_to_git_credential=False)
+except Exception as e:
+    sys.exit(f"  {e}")' >/dev/null
+}
+
+hf_access() {
+    hf_check
+    case "$HF_ACCESS" in
+        ok)      ok "Hugging Face: access to $HF_REPO"; return 0 ;;
+        cached)  warn "Couldn't reach Hugging Face; using the models already downloaded."; return 0 ;;
+        offline) warn "Couldn't reach Hugging Face; the server downloads the model on its first start."; return 0 ;;
+    esac
+    # No terminal (CI, or piped without /dev/tty): use HF_TOKEN if it is set
+    if [ ! -t 0 ]; then
+        if [ -n "${HF_TOKEN:-}" ] && hf_login "$HF_TOKEN"; then hf_check; fi
+        if [ "$HF_ACCESS" = ok ]; then
+            ok "Hugging Face: access to $HF_REPO (HF_TOKEN saved)"
+        else
+            warn "No access to $HF_REPO: accept its license at https://huggingface.co/$HF_REPO,"
+            warn "then run: $VENV_DIR/bin/hf auth login  (or install again with HF_TOKEN set)"
+        fi
+        return 0
+    fi
+    echo ""
+    echo "  The MIDI-GPT models are on Hugging Face and need a free account to download:"
+    echo "    1. Sign in at https://huggingface.co and accept the license at"
+    echo "       https://huggingface.co/$HF_REPO"
+    echo "    2. Create an access token at https://huggingface.co/settings/tokens"
+    echo "       (type \"Read\" is enough)"
+    if [ "$HF_ACCESS" = gated ]; then
+        echo "  (A token is saved, but its account has no access yet: accept the license,"
+        echo "  or paste another token.)"
+    fi
+    local tok
+    while true; do
+        read -r -s -p "  Paste the token (hidden), or press Enter to skip: " tok; echo
+        if [ -z "$tok" ]; then
+            [ "$HF_ACCESS" = gated ] && hf_check
+            if [ "$HF_ACCESS" = ok ]; then
+                ok "Hugging Face: access to $HF_REPO"
+            else
+                warn "Skipped. The server will say what is missing when it starts;"
+                warn "run this later: $VENV_DIR/bin/hf auth login"
+            fi
+            return 0
+        fi
+        hf_login "$tok" || { warn "That token was refused; try again."; continue; }
+        hf_check
+        case "$HF_ACCESS" in
+            ok)    ok "Token saved; access to $HF_REPO"; return 0 ;;
+            gated) warn "Token saved, but this account has no access yet: accept the license at"
+                   warn "https://huggingface.co/$HF_REPO, then press Enter." ;;
+            *)     warn "Token saved; Hugging Face couldn't be reached to check it."; return 0 ;;
+        esac
+    done
+}
+
 # ── Args ────────────────────────────────────────────────────────
 
 REAPER_ONLY=false
@@ -617,6 +713,8 @@ if python -c "from midigpt.inference.engine import InferenceEngine" 2>/dev/null;
 else
     fail "midigpt backend installation failed."
 fi
+
+hf_access
 
 fi # REAPER_ONLY == false (Steps 1-3)
 

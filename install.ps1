@@ -435,6 +435,131 @@ function Install-ReaImGui {
 # Dropbox) -- not a third-party scrape. Sforzando itself is a real
 # application installer, not a data file, so it's intentionally NOT
 # auto-installed the same way (see the instrument-setup prompt below).
+# -- Hugging Face access --
+# The model checkpoints on Hugging Face are gated: downloading them needs
+# an account that accepted the license, and a token saved where
+# midigpt-http finds it (~\.cache\huggingface\token).
+
+$HfRepo = "Metacreation/MIDI-GPT"
+$HfProbeModel = "yellow_medium"
+
+# Runs a Python snippet from a temp file (Windows PowerShell 5.1 mangles
+# double quotes in native-command arguments, so no `python -c`) with
+# HF_TOKEN left out: what counts is the saved token, the one the server
+# launchers will use. Extra environment variables go in $Env.
+function Invoke-HfPython {
+    param([string]$Code, [string[]]$PyArgs = @(), [hashtable]$Env = @{})
+    $tmp = [System.IO.Path]::GetTempFileName() + ".py"
+    Set-Content -Path $tmp -Value $Code -Encoding ASCII
+    $savedToken = $env:HF_TOKEN
+    Remove-Item Env:HF_TOKEN -ErrorAction SilentlyContinue
+    foreach ($k in $Env.Keys) { Set-Item "Env:$k" $Env[$k] }
+    try {
+        $out = & python $tmp @PyArgs 2>$null
+        return @{ Out = ($out | Select-Object -Last 1); Code = $LASTEXITCODE }
+    } finally {
+        foreach ($k in $Env.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+        if ($null -ne $savedToken) { $env:HF_TOKEN = $savedToken }
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+    }
+}
+
+# Returns ok (the saved token can download), nologin (no token saved),
+# gated (the token's account has no access), cached (Hugging Face couldn't
+# be reached, but a model is already downloaded), or offline. Access is
+# per repo, so one checkpoint is enough to probe.
+function Get-HfAccess {
+    $code = @'
+import glob, os, sys
+from huggingface_hub import constants, get_hf_file_metadata, get_token, hf_hub_url
+from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError
+from midigpt.inference.engine import _resolve_checkpoint_filename
+repo, model = sys.argv[1:]
+try:
+    get_hf_file_metadata(hf_hub_url(repo, _resolve_checkpoint_filename(repo, model)))
+    print("ok")
+except (GatedRepoError, RepositoryNotFoundError):
+    print("gated" if get_token() else "nologin")
+except Exception:
+    snapshots = os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "snapshots")
+    print("cached" if glob.glob(os.path.join(snapshots, "*", "*.safetensors")) else "offline")
+'@
+    $r = Invoke-HfPython -Code $code -PyArgs @($HfRepo, $HfProbeModel)
+    if ($r.Code -ne 0 -or -not $r.Out) { return "offline" }
+    return "$($r.Out)".Trim()
+}
+
+# Saves a Hugging Face token where midigpt-http finds it. The token is
+# passed in the environment, not on a command line.
+function Save-HfToken {
+    param([string]$Token)
+    $code = @'
+import os, sys
+from huggingface_hub import login
+try:
+    login(token=os.environ["MIDIGPT_HF_TOKEN"], add_to_git_credential=False)
+except Exception as e:
+    sys.exit(1)
+'@
+    $r = Invoke-HfPython -Code $code -Env @{ MIDIGPT_HF_TOKEN = $Token }
+    return ($r.Code -eq 0)
+}
+
+function Invoke-HfAccess {
+    $access = Get-HfAccess
+    switch ($access) {
+        "ok"      { Write-OK "Hugging Face: access to $HfRepo"; return }
+        "cached"  { Write-Warn "Couldn't reach Hugging Face; using the models already downloaded."; return }
+        "offline" { Write-Warn "Couldn't reach Hugging Face; the server downloads the model on its first start."; return }
+    }
+    # No console (CI, or redirected input): use HF_TOKEN if it is set
+    if (-not (Test-Interactive)) {
+        if ($env:HF_TOKEN -and (Save-HfToken $env:HF_TOKEN)) { $access = Get-HfAccess }
+        if ($access -eq "ok") {
+            Write-OK "Hugging Face: access to $HfRepo (HF_TOKEN saved)"
+        } else {
+            Write-Warn "No access to ${HfRepo}: accept its license at https://huggingface.co/$HfRepo,"
+            Write-Warn "then run: $VenvDir\Scripts\hf.exe auth login  (or install again with HF_TOKEN set)"
+        }
+        return
+    }
+    Write-Host ""
+    Write-Host "  The MIDI-GPT models are on Hugging Face and need a free account to download:"
+    Write-Host "    1. Sign in at https://huggingface.co and accept the license at"
+    Write-Host "       https://huggingface.co/$HfRepo"
+    Write-Host "    2. Create an access token at https://huggingface.co/settings/tokens"
+    Write-Host "       (type `"Read`" is enough)"
+    if ($access -eq "gated") {
+        Write-Host "  (A token is saved, but its account has no access yet: accept the license,"
+        Write-Host "  or paste another token.)"
+    }
+    while ($true) {
+        $secure = Read-Host "  Paste the token (hidden), or press Enter to skip" -AsSecureString
+        $tok = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        if (-not $tok) {
+            if ($access -eq "gated") { $access = Get-HfAccess }
+            if ($access -eq "ok") {
+                Write-OK "Hugging Face: access to $HfRepo"
+            } else {
+                Write-Warn "Skipped. The server will say what is missing when it starts;"
+                Write-Warn "run this later: $VenvDir\Scripts\hf.exe auth login"
+            }
+            return
+        }
+        if (-not (Save-HfToken $tok)) { Write-Warn "That token was refused; try again."; continue }
+        $access = Get-HfAccess
+        switch ($access) {
+            "ok"    { Write-OK "Token saved; access to $HfRepo"; return }
+            "gated" {
+                Write-Warn "Token saved, but this account has no access yet: accept the license at"
+                Write-Warn "https://huggingface.co/$HfRepo, then press Enter."
+            }
+            default { Write-Warn "Token saved; Hugging Face couldn't be reached to check it."; return }
+        }
+    }
+}
+
 function Install-ArachnoSoundfont {
     $DestDir = Join-Path $RepoDir "soundfonts"
     if (Test-Path $DestDir) {
@@ -778,6 +903,8 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     Write-Fail "midigpt backend installation failed."
 }
+
+Invoke-HfAccess
 
 } # ReaperOnly == false (Steps 1-3)
 
