@@ -61,8 +61,10 @@ fi
 
 # Hand off to the full installer. When piped from curl, stdin is the pipe
 # (not the terminal). Redirect from /dev/tty so interactive prompts work.
+# The ${arr[@]+...} form: macOS's bash 3.2 treats "${arr[@]}" of an empty
+# array as unbound under set -u, which aborted every plain one-line install.
 if [ -t 0 ]; then
-    exec bash "$INSTALL_DIR/install.sh" "${EXTRA_ARGS[@]}"
+    exec bash "$INSTALL_DIR/install.sh" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 else
-    exec bash "$INSTALL_DIR/install.sh" "${EXTRA_ARGS[@]}" < /dev/tty
+    exec bash "$INSTALL_DIR/install.sh" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} < /dev/tty
 fi
