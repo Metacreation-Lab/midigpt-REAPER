@@ -71,7 +71,7 @@ if (Test-Interactive) {
         $ActivateScript = Join-Path $RepoDir ".venv\Scripts\Activate.ps1"
         if (Test-Path $ActivateScript) {
             & $ActivateScript
-            midigpt-http --pretrained $Model
+            midigpt-http --pretrained $Model --port 3456 --device auto
         } else {
             Write-Fail "Virtual environment not found at .venv\ -- something went wrong above."
         }

@@ -1357,7 +1357,7 @@ if ((Test-Interactive) -and (-not $ReaperOnly) -and (-not $env:MIDIGPT_SKIP_LAUN
         Write-Host "  Keep this window open while using MIDI-GPT in REAPER."
         Write-Host "  Press Ctrl+C to stop the server."
         Write-Host ""
-        midigpt-http --pretrained $Model
+        midigpt-http --pretrained $Model --port 3456 --device auto
     } else {
         Write-Host ""
         Write-Host "Next steps:" -ForegroundColor White

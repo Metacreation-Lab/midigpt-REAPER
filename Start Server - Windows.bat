@@ -25,10 +25,13 @@ echo   Keep this window open while using MIDI-GPT in REAPER.
 echo   Press Ctrl+C to stop the server.
 echo.
 
+REM --device auto picks CUDA when available, else CPU: midigpt-http leaves
+REM the model on the CPU when no device is given. Passed before %* so an
+REM explicit --device (e.g. --device cpu) still wins.
 if "%~1"=="" (
-    midigpt-http --pretrained yellow_medium --port 3456
+    midigpt-http --pretrained yellow_medium --port 3456 --device auto
 ) else (
-    midigpt-http --port 3456 %*
+    midigpt-http --port 3456 --device auto %*
 )
 
 echo.

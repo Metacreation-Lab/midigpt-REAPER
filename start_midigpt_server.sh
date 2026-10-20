@@ -38,10 +38,14 @@ echo ""
 
 # Default parameters: run 'yellow' model on port 3456 if no arguments are provided.
 # If arguments are passed (e.g. --pretrained prism_medium or --ckpt ...), forward them.
+# --device auto picks CUDA, then Apple Silicon's MPS, then CPU: midigpt-http
+# leaves the model on the CPU when no device is given. Passed before "$@" so
+# an explicit --device (e.g. --device cpu) still wins -- which a TorchScript
+# checkpoint directory (--ckpt DIR) needs, since torch.jit.load can't take "auto".
 if [ $# -eq 0 ]; then
-    midigpt-http --pretrained yellow_medium --port 3456
+    midigpt-http --pretrained yellow_medium --port 3456 --device auto
 else
-    midigpt-http --port 3456 "$@"
+    midigpt-http --port 3456 --device auto "$@"
 fi
 status=$?
 
