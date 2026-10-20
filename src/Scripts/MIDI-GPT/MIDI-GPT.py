@@ -302,6 +302,33 @@ def draw_generation_panel():
     """(2,1) Generation controls and context/info section"""
     return generation_panel.draw(ctx, GLOBAL_SETTINGS, logic)
 
+def _context_lost():
+    """True (after saying why, once, in REAPER's own console) when
+    ReaImGui has no valid context for this window. Seen on Linux under
+    native Wayland (issue #7): ReaImGui can't open its window and drops the
+    context, and every later ImGui call fails -- so the loop stops instead
+    of repeating those errors every frame. REAPER's console, not the
+    dashboard's: there is no dashboard to print to."""
+    if imgui.ValidatePtr(ctx, 'ImGui_Context*'):
+        return False
+    message = (
+        "MIDI-GPT: ReaImGui could not open the dashboard window, so the "
+        "dashboard has stopped.\n"
+    )
+    if platform.system() == "Linux":
+        message += (
+            "On Wayland, start REAPER under XWayland instead:\n"
+            "    GDK_BACKEND=x11 reaper\n"
+        )
+    message += (
+        "If that doesn't help, update ReaImGui by running the MIDI-GPT "
+        "installer again, then restart REAPER.\n"
+        "More: https://github.com/Metacreation-Lab/midigpt-REAPER/issues/7\n"
+    )
+    RPR_ShowConsoleMsg(message)
+    return True
+
+
 def init():
     global ctx, mono_font, logic
     ctx = imgui.CreateContext('MIDI-GPT Dashboard')
@@ -312,6 +339,8 @@ def init():
     loop()
 
 def loop():
+    if _context_lost():
+        return
     logic.poll_generation()
     pending_action = None
     # 1. Set fixed window size (Always sets size to 800x600 every frame)

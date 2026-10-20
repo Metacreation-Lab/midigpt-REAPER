@@ -297,6 +297,24 @@ def get_pending_track_setup():
     }
 
 
+def server_down_help(server_url):
+    """Where to look when the server can't be reached. The server's own
+    window (or log) says why it stopped -- most often, at startup, that the
+    model on Hugging Face needs its license accepted and a token saved."""
+    host = server_url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0]
+    if host in ("127.0.0.1", "localhost", "::1", "[::1]"):
+        return (
+            "Is the server running? Start it with 'Start MIDI-GPT Server' on "
+            "your Desktop. If its window shows an error, that says why it "
+            "stopped -- for example, the model license on Hugging Face not "
+            "accepted yet (see Hugging Face Access in the README)."
+        )
+    return (
+        f"Is the server at {server_url} running? Its window or log on that "
+        "machine says why it stopped."
+    )
+
+
 def draw(ctx, logic=None, window_center=(0, 0)):
     action = None
     server_url = logic.server_url() if logic is not None else "127.0.0.1"
@@ -331,6 +349,10 @@ def draw(ctx, logic=None, window_center=(0, 0)):
         # No model list means the last /models query failed (the server was
         # down or unreachable) -- nothing retries on its own, so offer it.
         imgui.TextDisabled(ctx, "Model: server not reachable")
+        # Always shown, not only in hint mode: this is the moment a user
+        # needs to know where the reason is.
+        if logic is not None:
+            imgui.SetItemTooltip(ctx, server_down_help(server_url))
         imgui.SameLine(ctx)
         if imgui.Button(ctx, "Retry##retry_server") and logic is not None:
             action = "refresh_model"

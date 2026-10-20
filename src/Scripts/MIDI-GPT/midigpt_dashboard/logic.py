@@ -80,6 +80,7 @@ class DashboardLogic:
         except Exception as error:
             self.available_models = []
             print(f"Could not query available models: {error}\n")
+            print(setup_panel.server_down_help(self.server_url()) + "\n")
 
     def load_state(self):
         saved_global = _load_json(GLOBAL_PARAMS_KEY, 8192, {})
