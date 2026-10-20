@@ -93,34 +93,46 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\integration\test_install_helpers.ps1
 
+  # Both ends of the supported Python range (3.10 to 3.14; Intel Macs stop
+  # at 3.12, and these runners are Apple Silicon) plus the recommended 3.12.
   full-install-unix:
-    name: Full install (${{ matrix.os }})
+    name: Full install (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
+        id: python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
+      # install.sh prefers python3.12 when several are on PATH; point it
+      # at the one under test.
       - name: Run full install integration test
+        env:
+          PYTHON_CMD: ${{ steps.python.outputs.python-path }}
         run: ./tests/integration/test_install.sh
 
   full-install-windows:
-    name: Full install (windows-latest)
+    name: Full install (windows-latest, Python ${{ matrix.python }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Run full install integration test
         shell: pwsh

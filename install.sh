@@ -31,7 +31,11 @@ set -euo pipefail
 # ── Config ──────────────────────────────────────────────────────
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$REPO_DIR/.venv"
-PYTHON_MIN_VERSION="3.10"
+# Newest Python midigpt has wheels for; Intel Macs stop at 3.12, the last
+# Python with a PyTorch build for them (torch 2.2). Set once ARCH is known.
+PYTHON_MAX_MINOR=14
+# Most tested first, then the rest of the supported range.
+PYTHON_CANDIDATES="python3.12 python3.13 python3.14 python3.11 python3.10 python3"
 SKIP_DEPS=false
 SKIP_REAPER_CONFIG=false
 
@@ -62,6 +66,11 @@ step() {
     echo -e "${BOLD}────────────────────────────────────────────────────${NC}"
     echo -e "${BOLD}  $*${NC}"
     echo -e "${BOLD}────────────────────────────────────────────────────${NC}"
+}
+
+# True when $1 is a Python in the supported range (3.10 to 3.$PYTHON_MAX_MINOR).
+python_supported() {
+    "$1" -c "import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, $PYTHON_MAX_MINOR)))" 2>/dev/null
 }
 
 check_cmd() {
@@ -477,12 +486,16 @@ case "$OS" in
 esac
 ARCH="$(uname -m)"
 info "Platform: $PLATFORM ($OS) [$ARCH]"
+if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "x86_64" ]; then
+    PYTHON_MAX_MINOR=12
+fi
+PYTHON_RANGE="3.10 to 3.$PYTHON_MAX_MINOR"
 
 if [ "$REAPER_ONLY" = true ]; then
     step "Skipping system deps / venv / backend (--reaper-only)"
     # Still need a python to detect the ReaScript library path in Step 5.
     if [ -z "${PYTHON_CMD:-}" ]; then
-        for cmd in python3.12 python3.11 python3.10 python3; do
+        for cmd in $PYTHON_CANDIDATES; do
             if check_cmd "$cmd"; then
                 PYTHON_CMD="$cmd"
                 break
@@ -506,23 +519,21 @@ if [ "$SKIP_DEPS" = false ]; then
     if [ -n "${PYTHON_CMD:-}" ] && [ -f "$PYTHON_CMD" ]; then
         PY_VER="$($PYTHON_CMD -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
         ok "Python $PY_VER ($PYTHON_CMD) [override]"
+        python_supported "$PYTHON_CMD" \
+            || warn "Python $PY_VER is outside the supported $PYTHON_RANGE -- midigpt may not install"
     else
         PYTHON_CMD=""
-        for cmd in python3.12 python3.11 python3.10 python3; do
-            if check_cmd "$cmd"; then
+        for cmd in $PYTHON_CANDIDATES; do
+            if check_cmd "$cmd" && python_supported "$cmd"; then
                 PY_VER="$($cmd -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-                PY_MAJOR="$($cmd -c 'import sys; print(sys.version_info.major)')"
-                PY_MINOR="$($cmd -c 'import sys; print(sys.version_info.minor)')"
-                if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 10 ]; then
-                    PYTHON_CMD="$cmd"
-                    break
-                fi
+                PYTHON_CMD="$cmd"
+                break
             fi
         done
 
         if [ -z "$PYTHON_CMD" ]; then
-            MISSING+=("python>=3.10")
-            warn "Python >= $PYTHON_MIN_VERSION not found"
+            MISSING+=("python $PYTHON_RANGE")
+            warn "Python $PYTHON_RANGE not found"
         else
             ok "Python $PY_VER ($PYTHON_CMD)"
         fi
@@ -580,7 +591,7 @@ if [ "$SKIP_DEPS" = false ]; then
 
         # Python missing — give platform-specific install guidance
         if [[ " ${MISSING[*]} " == *"python"* ]]; then
-            echo "  Python 3.10, 3.11, or 3.12 is required. Install options:"
+            echo "  Python $PYTHON_RANGE is required. Install options:"
             echo ""
             if [ "$PLATFORM" = "macos" ]; then
                 echo "  Option A — Homebrew (recommended):"
@@ -599,7 +610,7 @@ if [ "$SKIP_DEPS" = false ]; then
             fi
             echo ""
             echo "  After installing Python, re-run this installer."
-            fail "Python >= $PYTHON_MIN_VERSION is required"
+            fail "Python $PYTHON_RANGE is required"
         fi
     fi
 
@@ -612,16 +623,13 @@ else
         info "Using custom Python $PYTHON_CMD [override]"
     else
         PYTHON_CMD=""
-        for cmd in python3.12 python3.11 python3.10 python3; do
-            if check_cmd "$cmd"; then
-                PY_MINOR="$($cmd -c 'import sys; print(sys.version_info.minor)')"
-                if [ "$PY_MINOR" -ge 10 ]; then
-                    PYTHON_CMD="$cmd"
-                    break
-                fi
+        for cmd in $PYTHON_CANDIDATES; do
+            if check_cmd "$cmd" && python_supported "$cmd"; then
+                PYTHON_CMD="$cmd"
+                break
             fi
         done
-        [ -z "$PYTHON_CMD" ] && fail "Python >= $PYTHON_MIN_VERSION required but not found"
+        [ -z "$PYTHON_CMD" ] && fail "Python $PYTHON_RANGE required but not found"
     fi
 fi
 
@@ -666,6 +674,10 @@ else
         else
             pip install torch
         fi
+    elif [ "$ARCH" = "x86_64" ]; then
+        # Intel Mac: torch 2.2 is the last release built for it, and it was
+        # compiled against NumPy 1.x
+        pip install "torch<2.3" "numpy<2"
     else
         # macOS: default wheel includes MPS support for Apple Silicon
         pip install torch

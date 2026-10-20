@@ -367,7 +367,7 @@
 
 [![License: MIT](https://img.shields.io/github/license/Metacreation-Lab/midigpt-REAPER)](LICENSE)
 [![REAPER](https://img.shields.io/badge/REAPER-v6%2B-5C2D91)](https://www.reaper.fm/)
-[![Python](https://img.shields.io/badge/python-3.10--3.12-3776ab)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10--3.14-3776ab)](https://www.python.org/downloads/)
 [![Powered by MIDI-GPT](https://img.shields.io/badge/powered%20by-MIDI--GPT-eb1c3b)](https://github.com/Metacreation-Lab/MIDI-GPT)
 [![arXiv](https://img.shields.io/badge/arXiv-2501.17011-b31b1b)](https://arxiv.org/abs/2501.17011)
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-Metacreation%2FMIDI--GPT-FFD21E?logo=huggingface&logoColor=000)](https://huggingface.co/Metacreation/MIDI-GPT)
@@ -428,7 +428,7 @@
 
 - **REAPER** 64-bit (v6 or later) — [Download REAPER](https://www.reaper.fm/download.php) (select the **64-bit** version for your OS)
 - **ReaImGui** — the REAPER extension the dashboard UI is built with. The installer downloads and installs this for you automatically (direct download with checksum verification — no ReaPack browsing or REAPER restart needed for the normal path)
-- **Python** 3.10 – 3.12 (3.12 recommended) — [Download Python](https://www.python.org/downloads/)
+- **Python** 3.10 – 3.14 (3.12 recommended; **Intel Macs: 3.10 – 3.12**, the last Python PyTorch was built for there) — [Download Python](https://www.python.org/downloads/)
 - **git** — used as a fallback source clone if installing the MIDI-GPT backend from PyPI fails
 - **curl** — used to download ReaImGui, ReaPack, and the Arachno soundfont
 - **Microsoft Visual C++ Redistributable** (Windows only, 14.40 or newer) — required by PyTorch. The installer checks for it and offers to install it from Microsoft for you (Windows will ask for administrator permission once). To install it yourself: [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)
@@ -447,7 +447,7 @@ curl -fsSL https://raw.githubusercontent.com/Metacreation-Lab/midigpt-REAPER/mai
 irm https://raw.githubusercontent.com/Metacreation-Lab/midigpt-REAPER/main/bootstrap.ps1 | iex
 ```
 
-Clones the repo to `~/midigpt-REAPER` (macOS/Linux) or `%USERPROFILE%\midigpt-REAPER` (Windows) and runs the full installer. Requires Python 3.10–3.12 and `git`; if Python is missing, the script tells you exactly how to get it for your OS. To point the install at a local MIDI-GPT (the model) source checkout instead of installing it from PyPI, set `MIDIGPT_DIR=/path/to/MIDI-GPT` (or `$env:MIDIGPT_DIR` on Windows) before running the command above.
+Clones the repo to `~/midigpt-REAPER` (macOS/Linux) or `%USERPROFILE%\midigpt-REAPER` (Windows) and runs the full installer. Requires Python 3.10–3.14 (3.10–3.12 on Intel Macs) and `git`; if Python is missing, the script tells you exactly how to get it for your OS. To point the install at a local MIDI-GPT (the model) source checkout instead of installing it from PyPI, set `MIDIGPT_DIR=/path/to/MIDI-GPT` (or `$env:MIDIGPT_DIR` on Windows) before running the command above.
 
 **To update later:**
 - macOS/Linux: `cd ~/midigpt-REAPER && ./update.sh`
@@ -614,7 +614,7 @@ CI runs the installer on macOS, Linux and Windows but never starts REAPER or Sfo
 
 #### macOS clean-machine check
 
-Start with REAPER installed and launched once, plus Python 3.10–3.12 and git. If the machine had a previous install, close REAPER and run `./dev/dev_reset.sh` first.
+Start with REAPER installed and launched once, plus Python 3.10–3.14 (3.10–3.12 on an Intel Mac) and git. If the machine had a previous install, close REAPER and run `./dev/dev_reset.sh` first.
 
 1. **Sforzando:** install it from Plogue's [product page](https://www.plogue.com/products/sforzando.html), keeping the VST and/or VST3 build selected in its installer (AU and CLAP alone aren't enough for Setup Tracks).
 2. **Installer:** run `./install.sh` (or double-click `Install - Mac.command`) and answer **y** to the Arachno download. Expect no `[WARN]` lines other than "No published checksum for ReaImGui".
@@ -625,7 +625,7 @@ Start with REAPER installed and launched once, plus Python 3.10–3.12 and git. 
 
 #### Windows clean-machine check
 
-Start from Windows 10 or 11 (64-bit) with REAPER 64-bit installed and launched once, plus Python 3.10–3.12 and git. Leave the Microsoft Visual C++ Runtime *uninstalled* if you can, since installing it is part of what's being checked. If the machine had a previous install, close REAPER and run `.\dev\dev_reset.ps1` in PowerShell first.
+Start from Windows 10 or 11 (64-bit) with REAPER 64-bit installed and launched once, plus Python 3.10–3.14 and git. Leave the Microsoft Visual C++ Runtime *uninstalled* if you can, since installing it is part of what's being checked. If the machine had a previous install, close REAPER and run `.\dev\dev_reset.ps1` in PowerShell first.
 
 1. **Sforzando:** install it from Plogue's [product page](https://www.plogue.com/products/sforzando.html), keeping the VST3 (or VST2) build selected.
 2. **Installer:** double-click `Install - Windows.bat` (or run `.\install.ps1` in PowerShell) and answer **y** to the Arachno download. If the Visual C++ Runtime is missing or older than 14.40, the installer says so and offers to install it (one administrator prompt), and PyTorch then imports without errors. Expect no other `[WARN]` lines apart from "No published checksum for ReaImGui".
@@ -636,7 +636,7 @@ Start from Windows 10 or 11 (64-bit) with REAPER 64-bit installed and launched o
 
 #### Linux clean-machine check
 
-Start with REAPER installed from its Linux tarball and launched once, plus Python 3.10–3.12 and git. If the machine had a previous install, close REAPER and run `./dev/dev_reset.sh` first.
+Start with REAPER installed from its Linux tarball and launched once, plus Python 3.10–3.14 and git. If the machine had a previous install, close REAPER and run `./dev/dev_reset.sh` first.
 
 1. **Sforzando:** download "sforzando for Linux (beta)" from Plogue's [downloads page](https://www.plogue.com/downloads.html#sforzando), unzip it and run `./install_sforzando.sh`.
 2. **Installer:** run `./install.sh` and answer **y** to the Arachno download. Expect no `[WARN]` lines other than "No published checksum for ReaImGui", and `[OK] VST plug-in paths: ...;/usr/lib/vst3`.

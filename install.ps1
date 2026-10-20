@@ -63,7 +63,9 @@ $ErrorActionPreference = "Continue"
 # ── Config ──────────────────────────────────────────────────────
 $RepoDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvDir = Join-Path $RepoDir ".venv"
-$PythonMinVersion = "3.10"
+# Python range midigpt has wheels for
+$PythonMaxMinor = 14
+$PythonRange = "3.10 to 3.$PythonMaxMinor"
 $PythonCmd = ""
 
 # The midigpt release this plugin is tested against (PyPI, or the matching
@@ -88,6 +90,17 @@ function Write-Step {
 function Test-Command { param($cmd) $null -ne (Get-Command $cmd -ErrorAction SilentlyContinue) }
 
 function Test-Interactive { -not [Console]::IsInputRedirected }
+
+# First of python3/python that is in the supported range, or "".
+function Find-SupportedPython {
+    foreach ($cmd in @("python3", "python")) {
+        if (Test-Command $cmd) {
+            & $cmd -c "import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, $PythonMaxMinor)))" 2>$null
+            if ($LASTEXITCODE -eq 0) { return $cmd }
+        }
+    }
+    return ""
+}
 
 # Test-only override (see tests/) -- simulates REAPER being open without
 # needing a real REAPER process running.
@@ -673,21 +686,14 @@ if (-not $SkipDeps) {
     $Missing = @()
 
     # -- Python --
-    foreach ($cmd in @("python3", "python")) {
-        if (Test-Command $cmd) {
-            $PyVer = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-            $PyMajor = & $cmd -c "import sys; print(sys.version_info.major)" 2>$null
-            $PyMinor = & $cmd -c "import sys; print(sys.version_info.minor)" 2>$null
-            if ([int]$PyMajor -ge 3 -and [int]$PyMinor -ge 10) {
-                $PythonCmd = $cmd
-                break
-            }
-        }
+    $PythonCmd = Find-SupportedPython
+    if ($PythonCmd) {
+        $PyVer = & $PythonCmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
     }
 
     if (-not $PythonCmd) {
         $Missing += "python>=3.10"
-        Write-Warn "Python >= $PythonMinVersion not found"
+        Write-Warn "Python $PythonRange not found"
     } else {
         Write-OK "Python $PyVer ($PythonCmd)"
     }
@@ -728,17 +734,7 @@ if (-not $SkipDeps) {
             # Refresh PATH after install
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-            if (-not $PythonCmd) {
-                foreach ($cmd in @("python3", "python")) {
-                    if (Test-Command $cmd) {
-                        $PyMinor = & $cmd -c "import sys; print(sys.version_info.minor)" 2>$null
-                        if ([int]$PyMinor -ge 10) {
-                            $PythonCmd = $cmd
-                            break
-                        }
-                    }
-                }
-            }
+            if (-not $PythonCmd) { $PythonCmd = Find-SupportedPython }
         } else {
             Write-Host ""
             Write-Host "Please install the missing dependencies manually:"
@@ -754,7 +750,7 @@ if (-not $SkipDeps) {
         }
     }
 
-    if (-not $PythonCmd) { Write-Fail "Python >= $PythonMinVersion required but not found" }
+    if (-not $PythonCmd) { Write-Fail "Python $PythonRange required but not found" }
 
     # -- Microsoft Visual C++ Runtime (see Get-VcRuntimeVersion) --
     $VcArch = Get-VcRuntimeArch -Py $PythonCmd
@@ -787,16 +783,8 @@ if (-not $SkipDeps) {
 
 } else {
     Write-Step "Step 1/6: Skipping dependency check (-SkipDeps)"
-    foreach ($cmd in @("python3", "python")) {
-        if (Test-Command $cmd) {
-            $PyMinor = & $cmd -c "import sys; print(sys.version_info.minor)" 2>$null
-            if ([int]$PyMinor -ge 10) {
-                $PythonCmd = $cmd
-                break
-            }
-        }
-    }
-    if (-not $PythonCmd) { Write-Fail "Python >= $PythonMinVersion required but not found" }
+    $PythonCmd = Find-SupportedPython
+    if (-not $PythonCmd) { Write-Fail "Python $PythonRange required but not found" }
 }
 
 # ====================================================================
